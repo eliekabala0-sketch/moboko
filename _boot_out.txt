@@ -1,0 +1,5 @@
+
+> bootstrap:web-env
+> node scripts/bootstrap-web-env.mjs
+
+bootstrap-web-env → C:\Users\user\moboko\apps\web\.env.local

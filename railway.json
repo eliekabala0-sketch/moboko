@@ -1,0 +1,17 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "buildCommand": "npm run build:web",
+    "watchPatterns": [
+      "apps/web/**",
+      "packages/**",
+      "package.json",
+      "package-lock.json",
+      "scripts/bootstrap-web-env.mjs"
+    ]
+  },
+  "deploy": {
+    "startCommand": "npm run start:web",
+    "restartPolicyType": "ON_FAILURE"
+  }
+}

@@ -1,0 +1,142 @@
+@import "tailwindcss";
+
+:root {
+  /* Fond & surfaces — bleu nuit profond, pas plat */
+  --background: #080b12;
+  --background-mid: #0c1220;
+  --foreground: #e8ecf4;
+  --muted: #8b95a8;
+  --surface: #12192b;
+  --surface-elevated: #1a2338;
+  --surface-glow: rgba(91, 127, 200, 0.06);
+
+  /* Bordures & relief */
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(201, 169, 98, 0.2);
+  --ring: rgba(91, 127, 200, 0.45);
+
+  /* Accents — or spirituel + bleu action (doux) */
+  --accent: #c9a962;
+  --accent-soft: rgba(201, 169, 98, 0.14);
+  --primary: #5b7fc8;
+  --primary-hover: #6d8fd4;
+  --primary-soft: rgba(91, 127, 200, 0.16);
+
+  /* États */
+  --success: #6bcea0;
+  --success-soft: rgba(107, 206, 160, 0.12);
+  --danger: #e07878;
+  --danger-soft: rgba(224, 120, 120, 0.12);
+  --warning: #d4a574;
+  --warning-soft: rgba(212, 165, 116, 0.14);
+
+  /* Chat */
+  --chat-user: linear-gradient(145deg, #2a3f66 0%, #243556 100%);
+  --chat-assistant: rgba(255, 255, 255, 0.04);
+  --chat-assistant-border: rgba(255, 255, 255, 0.1);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-primary: var(--primary);
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-moboko-display), ui-serif, Georgia, serif;
+}
+
+body {
+  min-height: 100%;
+  background: radial-gradient(ellipse 120% 80% at 50% -20%, var(--surface-glow), transparent 50%),
+    linear-gradient(180deg, var(--background-mid) 0%, var(--background) 45%, #06080e 100%);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+::selection {
+  background: var(--primary-soft);
+  color: var(--foreground);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(201, 169, 98, 0.25);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* Champs & cartes réutilisables */
+.moboko-input {
+  width: 100%;
+  border-radius: 0.875rem;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0.625rem 0.875rem;
+  font-size: 0.9375rem;
+  color: var(--foreground);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+.moboko-input::placeholder {
+  color: var(--muted);
+  opacity: 0.85;
+}
+.moboko-input:focus {
+  border-color: rgba(91, 127, 200, 0.45);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+  background: rgba(255, 255, 255, 0.05);
+}
+.moboko-input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.moboko-card {
+  border-radius: 1.25rem;
+  border: 1px solid var(--border);
+  background: linear-gradient(165deg, rgba(26, 35, 56, 0.85) 0%, rgba(18, 25, 43, 0.95) 100%);
+  box-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.moboko-btn-primary {
+  border-radius: 9999px;
+  background: linear-gradient(180deg, var(--primary-hover) 0%, var(--primary) 100%);
+  color: #f4f6fb;
+  font-weight: 600;
+  font-size: 0.875rem;
+  padding: 0.625rem 1.25rem;
+  box-shadow: 0 4px 20px -4px rgba(91, 127, 200, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  transition: filter 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+.moboko-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+  box-shadow: 0 6px 28px -4px rgba(91, 127, 200, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+.moboko-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.font-display {
+  font-family: var(--font-moboko-display), ui-serif, Georgia, serif;
+}

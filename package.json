@@ -1,0 +1,28 @@
+{
+  "name": "moboko",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w @moboko/web",
+    "build:web": "npm run build -w @moboko/web",
+    "start:web": "npm run start -w @moboko/web",
+    "start:mobile": "npm run start -w @moboko/mobile",
+    "lint:web": "npm run lint -w @moboko/web",
+    "verify:supabase": "node scripts/verify-supabase.mjs",
+    "bootstrap:web-env": "node scripts/bootstrap-web-env.mjs",
+    "postinstall": "node scripts/bootstrap-web-env.mjs",
+    "verify:ai-server": "node scripts/verify-ai-server.mjs",
+    "verify:ai": "node scripts/bootstrap-web-env.mjs && node scripts/verify-ai-server.mjs",
+    "e2e:ai": "node scripts/bootstrap-web-env.mjs && npm run build -w @moboko/web && node scripts/e2e-ai-chat.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@supabase/supabase-js": "^2.86.0",
+    "openai": "^6.33.0"
+  }
+}

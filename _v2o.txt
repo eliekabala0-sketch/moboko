@@ -1,0 +1,5 @@
+
+> verify:ai
+> node scripts/bootstrap-web-env.mjs && node scripts/verify-ai-server.mjs
+
+bootstrap-web-env → C:\Users\user\moboko\apps\web\.env.local
