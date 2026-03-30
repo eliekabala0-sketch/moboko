@@ -54,6 +54,64 @@ const FR_STOP = new Set([
   "leurs",
 ]);
 
+const TYPO_EQUIV: Record<string, string[]> = {
+  dime: ["dîme", "dime"],
+  prophete: ["prophète", "prophete", "messager"],
+  boire: ["boire", "alcool", "vin", "boisson", "ivrognerie", "sobriete", "tempérance"],
+  sobriete: ["sobriété", "sobriete", "tempérance", "temperance"],
+  enlevement: ["enlèvement", "enlevement"],
+  stature: ["stature", "homme parfait", "stature homme parfait"],
+};
+
+function stripDiacritics(s: string) {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function normalizeLooseQuery(s: string) {
+  return stripDiacritics(s)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s"'-]+/gu, " ")
+    .replace(/\bq\b/g, "que")
+    .replace(/\bou\b/g, "où")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildToleranceQueries(query: string) {
+  const out: string[] = [];
+  const base = query.trim();
+  const loose = normalizeLooseQuery(query);
+  const push = (x: string) => {
+    const v = x.trim();
+    if (!v) return;
+    if (!out.includes(v)) out.push(v);
+  };
+  push(base);
+  push(loose);
+  const tokens = loose.match(/[\p{L}\p{N}]+/gu) ?? [];
+  for (const t of tokens) {
+    const exp = TYPO_EQUIV[t];
+    if (!exp) continue;
+    for (const alt of exp) push(`${loose} ${alt}`);
+  }
+  return out.slice(0, 7);
+}
+
+function simplifyQueryForRecall(query: string) {
+  const t = normalizeLooseQuery(query);
+  const words = (t.match(/[\p{L}\p{N}]+/gu) ?? [])
+    .filter((w) => w.length >= 3 && !FR_STOP.has(w))
+    .slice(0, 10);
+  return words.join(" ");
+}
+
+function buildSingleTokenQueries(query: string) {
+  const words = (normalizeLooseQuery(query).match(/[\p{L}\p{N}]+/gu) ?? [])
+    .filter((w) => w.length >= 4 && !FR_STOP.has(w))
+    .slice(0, 8);
+  return words;
+}
+
 function normalizeSermonEmbed(emb: unknown): {
   slug: string;
   title: string;
@@ -99,7 +157,7 @@ function rowToCandidate(row: {
 }
 
 export function extractTitleTokens(query: string): string[] {
-  const raw = query.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  const raw = normalizeLooseQuery(query).match(/[\p{L}\p{N}]+/gu) ?? [];
   const out: string[] = [];
   for (const w of raw) {
     if (w.length < 4) continue;
@@ -154,12 +212,55 @@ export async function fetchSermonSearchCandidates(
     pushCandidates(seen, acc, data as unknown[]);
   };
 
-  await runFts(query, 50);
+  // Pass 1 — Requête principale + variantes tolérantes.
+  const tolerantQueries = buildToleranceQueries(query);
+  for (const q of tolerantQueries) {
+    await runFts(q, q === tolerantQueries[0] ? 50 : 24);
+    if (acc.length >= 220) break;
+  }
 
+  // Pass 2 — Version simplifiée (mots utiles seulement).
+  const simplified = simplifyQueryForRecall(query);
+  if (simplified && !tolerantQueries.includes(simplified) && acc.length < 160) {
+    await runFts(simplified, 70);
+  }
+
+  // Pass 3 — Recherche token par token (rappel fort sur formulation imparfaite).
+  if (acc.length < 180) {
+    const singles = buildSingleTokenQueries(query);
+    for (const tk of singles) {
+      await runFts(tk, 26);
+      if (acc.length >= 260) break;
+    }
+  }
+
+  // Pass 4 — Longue requête tronquée.
   if (acc.length === 0 && query.length > 100) {
     await runFts(query.slice(0, 200).trim(), 40);
   }
 
+  // Pass 5 — Fallback textuel large via normalized_text ILIKE.
+  if (acc.length < 20) {
+    const tokens = normalizeLooseQuery(query)
+      .match(/[\p{L}\p{N}]+/gu)
+      ?.filter((x) => x.length >= 4 && !FR_STOP.has(x))
+      .slice(0, 7) ?? [];
+    for (const tk of tokens) {
+      const like = sanitizeLikePattern(tk);
+      if (!like) continue;
+      const { data } = await admin
+        .from("sermon_paragraphs")
+        .select(
+          "paragraph_number, paragraph_text, sermons ( slug, title, year, preached_on, location, is_published )",
+        )
+        .ilike("normalized_text", `%${like}%`)
+        .limit(40);
+      pushCandidates(seen, acc, data as unknown[]);
+      if (acc.length >= 300) break;
+    }
+  }
+
+  // Pass 6 — Basé sur titres de sermons (puis paragraphes liés).
   const tokens = extractTitleTokens(query);
   if (tokens.length > 0) {
     const orClauses = tokens
@@ -176,7 +277,7 @@ export async function fetchSermonSearchCandidates(
         .select("id")
         .eq("is_published", true)
         .or(orClauses.join(","))
-        .limit(14);
+        .limit(50);
 
       const ids = (sermons ?? [])
         .map((x) => (x as { id?: string }).id)
@@ -190,25 +291,36 @@ export async function fetchSermonSearchCandidates(
             "paragraph_number, paragraph_text, sermons ( slug, title, year, preached_on, location, is_published )",
           )
           .in("sermon_id", ids)
-          .textSearch("search_tsv", query, { type: "websearch", config: "french" })
-          .limit(36);
+          .textSearch("search_tsv", tolerantQueries[0] ?? query, { type: "websearch", config: "french" })
+          .limit(90);
         pushCandidates(seen, acc, scoped as unknown[]);
 
-        if (acc.length === countBeforeScoped) {
+        if (acc.length === countBeforeScoped || acc.length < 120) {
           const { data: fallback } = await admin
             .from("sermon_paragraphs")
             .select(
               "paragraph_number, paragraph_text, sermons ( slug, title, year, preached_on, location, is_published )",
             )
-            .in("sermon_id", ids.slice(0, 4))
+            .in("sermon_id", ids.slice(0, 10))
             .order("sermon_id", { ascending: true })
             .order("paragraph_number", { ascending: true })
-            .limit(40);
+            .limit(140);
           pushCandidates(seen, acc, fallback as unknown[]);
         }
       }
     }
   }
 
-  return acc.slice(0, 56);
+  // Pass 7 — Dernier élargissement “large” si toujours faible.
+  if (acc.length < 60) {
+    const broad = simplifyQueryForRecall(query)
+      .split(" ")
+      .slice(0, 4)
+      .join(" ");
+    if (broad) {
+      await runFts(broad, 120);
+    }
+  }
+
+  return acc.slice(0, 360);
 }
