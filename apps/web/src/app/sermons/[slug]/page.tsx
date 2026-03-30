@@ -46,12 +46,20 @@ export default async function SermonDetailPage({ params }: Props) {
       <Masthead />
       <ScrollToSermonHash />
       <article className="mx-auto w-full max-w-3xl flex-1 px-6 py-14">
-        <Link
-          href="/sermons"
-          className="text-sm font-medium text-[var(--accent)] transition hover:text-[var(--foreground)]"
-        >
-          ← Tous les sermons
-        </Link>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <Link
+            href="/sermons"
+            className="text-sm font-medium text-[var(--accent)] transition hover:text-[var(--foreground)]"
+          >
+            ← Tous les sermons
+          </Link>
+          <Link
+            href="/sermons#recherche-ia"
+            className="text-sm text-[var(--muted)] underline-offset-4 transition hover:text-[var(--accent)] hover:underline"
+          >
+            Recherche (texte ou IA)
+          </Link>
+        </div>
         <h1 className="font-display mt-6 text-3xl font-semibold tracking-tight text-[var(--foreground)]">
           {sermon.title}
         </h1>

@@ -6,6 +6,10 @@ import {
   transcribeAudio,
   type DbMessageRow,
 } from "@/lib/ai/moboko-chat";
+import {
+  clipForPrompt,
+  fetchSermonSearchCandidates,
+} from "@/lib/sermons/ai-sermon-search-server";
 import { getUserFromApiRequest } from "@/lib/supabase/api-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
 import {
@@ -55,6 +59,29 @@ function parseBody(raw: unknown): Body | null {
 
 function pathBelongsToUser(path: string, userId: string) {
   return path.startsWith(`${userId}/`);
+}
+
+async function maybeInjectSermonContext(
+  completionMessages: ChatCompletionMessageParam[],
+  queryText: string | null,
+  admin: NonNullable<ReturnType<typeof createSupabaseServiceClient>>,
+) {
+  const q = (queryText ?? "").trim();
+  if (q.length < 10) return 0;
+  const candidates = await fetchSermonSearchCandidates(admin, q);
+  if (candidates.length === 0) return 0;
+  const top = candidates.slice(0, 4);
+  const lines = top.map((c, idx) => {
+    const y = c.year != null ? ` (${c.year})` : "";
+    return `${idx + 1}. ${c.title}${y} §${c.paragraph_number}\n${clipForPrompt(c.paragraph_text, 420)}`;
+  });
+  completionMessages.push({
+    role: "system",
+    content:
+      "Contexte sermons disponibles (extraits vérifiés de la base Moboko ; n'invente pas au-delà) :\n\n" +
+      lines.join("\n\n"),
+  });
+  return top.length;
 }
 
 export async function POST(request: Request) {
@@ -268,6 +295,12 @@ export async function POST(request: Request) {
       completionMessages.push({ role: "user", content: transcription });
     }
 
+    const sermonContextCount = await maybeInjectSermonContext(
+      completionMessages,
+      userContent,
+      admin,
+    );
+
     const assistantText = await runChatCompletion(openai, completionMessages);
     if (!assistantText) {
       return NextResponse.json({ error: "reponse_ia_vide" }, { status: 502 });
@@ -275,6 +308,7 @@ export async function POST(request: Request) {
 
     const metaAssistant = {
       model: getChatModel(),
+      sermon_context_count: sermonContextCount,
     };
 
     const { data: userIns, error: uErr } = await admin

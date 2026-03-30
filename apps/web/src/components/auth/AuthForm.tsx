@@ -1,9 +1,18 @@
-﻿"use client";
+"use client";
 
 import { getSiteUrl } from "@/lib/auth/site-url";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+
+/** Paramètre `next` : chemin interne uniquement (ex. /billing, /sermons#recherche-ia). */
+function safeInternalPath(raw: string | null): string | null {
+  if (raw == null) return null;
+  const t = raw.trim();
+  if (!t.startsWith("/") || t.startsWith("//")) return null;
+  if (t.includes("://")) return null;
+  return t;
+}
 
 function normalizeE164(raw: string): string {
   const t = raw.trim().replace(/\s/g, "");
@@ -28,6 +37,8 @@ export function AuthForm() {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
+  const redirectAfterAuth = safeInternalPath(searchParams.get("next"));
 
   useEffect(() => {
     const err = searchParams.get("error");
@@ -106,7 +117,7 @@ export function AuthForm() {
         return;
       }
       router.refresh();
-      router.push("/");
+      router.push(redirectAfterAuth ?? "/");
     } finally {
       setLoading(null);
     }
@@ -128,7 +139,7 @@ export function AuthForm() {
           return;
         }
         router.refresh();
-        router.push("/");
+        router.push(redirectAfterAuth ?? "/");
       } else {
         const { data, error: uErr } = await supabase().auth.signUp({
           email: email.trim(),
@@ -141,7 +152,7 @@ export function AuthForm() {
         }
         router.refresh();
         if (data.session) {
-          router.push("/");
+          router.push(redirectAfterAuth ?? "/");
         } else {
           setInfo(
             "Compte créé. Si une confirmation e-mail est activée sur le projet, ouvrez le lien reçu ; sinon connectez-vous.",

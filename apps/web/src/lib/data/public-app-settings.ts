@@ -43,6 +43,13 @@ function rowToPartial(
       return {
         initialFreeCredits: typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 5,
       };
+    case PUBLIC_APP_SETTING_KEYS.sermonAiSearchEnabled:
+      return { sermonAiSearchEnabled: Boolean(v) };
+    case PUBLIC_APP_SETTING_KEYS.sermonAiSearchCreditCost:
+      return {
+        sermonAiSearchCreditCost:
+          typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 2,
+      };
     default:
       return {};
   }

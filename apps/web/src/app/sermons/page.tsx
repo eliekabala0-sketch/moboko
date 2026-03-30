@@ -1,5 +1,7 @@
+import { SermonAiSearchPanel } from "@/components/sermons/SermonAiSearchPanel";
 import { SermonLibrarySearchForm } from "@/components/sermons/SermonLibrarySearchForm";
 import { Masthead } from "@/components/layout/Masthead";
+import { fetchPublicAppSettings } from "@/lib/data/public-app-settings";
 import {
   buildParagraphExcerpt,
   sanitizeLikePattern,
@@ -25,6 +27,7 @@ export default async function SermonsPage({ searchParams }: PageProps) {
   const sl = sp.sl?.trim() ?? "";
   const pq = sp.pq?.trim() ?? "";
 
+  const pub = await fetchPublicAppSettings();
   const supabase = await createSupabaseServerClient();
 
   let rows: SermonListRow[] = [];
@@ -108,10 +111,15 @@ export default async function SermonsPage({ searchParams }: PageProps) {
           Sermons
         </h1>
         <p className="mt-3 text-sm leading-relaxed text-[var(--muted)]">
-          Filtres par titre, année et lieu ; recherche full-text dans les paragraphes (français).
+          Filtres par titre, année et lieu ; recherche full-text dans les paragraphes (français) ; option assistée par IA
+          pour les questions en langage naturel.
         </p>
 
         <SermonLibrarySearchForm st={st} sy={sy} sl={sl} pq={pq} />
+
+        <div id="recherche-ia" className="scroll-mt-28">
+          <SermonAiSearchPanel enabled={pub.sermonAiSearchEnabled} creditCost={pub.sermonAiSearchCreditCost} />
+        </div>
 
         {hasParagraphQuery ? (
           <section className="mt-12">
@@ -176,24 +184,41 @@ export default async function SermonsPage({ searchParams }: PageProps) {
             </p>
           ) : (
             <ul className="mt-4 space-y-3">
-              {rows.map((s) => (
-                <li key={s.id}>
-                  <Link
-                    href={`/sermons/${encodeURIComponent(s.slug)}`}
-                    className="moboko-card block p-5 transition hover:border-[var(--border-strong)]"
-                  >
-                    <p className="font-medium text-[var(--foreground)]">{s.title}</p>
-                    <p className="mt-2 text-xs text-[var(--muted)]">
-                      {[s.preached_on, s.year ? `${s.year}` : null, s.location]
-                        .filter(Boolean)
-                        .join(" · ") || "Sans date"}
-                      {s.paragraph_count > 0
-                        ? ` · ${s.paragraph_count} paragraphe${s.paragraph_count > 1 ? "s" : ""}`
-                        : ""}
-                    </p>
-                  </Link>
-                </li>
-              ))}
+              {rows.map((s) => {
+                const slugEnc = encodeURIComponent(s.slug);
+                const meta = [
+                  s.preached_on,
+                  s.year ? `${s.year}` : null,
+                  s.location,
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
+                return (
+                  <li key={s.id}>
+                    <div className="moboko-card p-5 transition hover:border-[var(--border-strong)]">
+                      <Link href={`/sermons/${slugEnc}`} className="block">
+                        <p className="font-medium text-[var(--foreground)] transition hover:text-[var(--accent)]">
+                          {s.title}
+                        </p>
+                        <p className="mt-2 text-xs text-[var(--muted)]">
+                          {meta || "Sans date"}
+                          {s.paragraph_count > 0
+                            ? ` · ${s.paragraph_count} paragraphe${s.paragraph_count > 1 ? "s" : ""}`
+                            : ""}
+                        </p>
+                      </Link>
+                      <div className="mt-4 flex flex-wrap gap-4 border-t border-[var(--border)] pt-4 text-sm font-medium">
+                        <Link href={`/sermons/${slugEnc}`} className="text-[var(--accent)] hover:underline">
+                          Lecture
+                        </Link>
+                        <Link href={`/sermons/${slugEnc}/project`} className="text-[var(--foreground)] hover:underline">
+                          Projection (début)
+                        </Link>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>

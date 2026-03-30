@@ -14,6 +14,9 @@ export const PUBLIC_APP_SETTING_KEYS = {
   imageCreditCost: "image_credit_cost",
   /** Crédits attribués à chaque nouveau compte (trigger profil). */
   initialFreeCredits: "initial_free_credits",
+  /** Recherche assistée par IA sur les sermons (bibliothèque). */
+  sermonAiSearchEnabled: "sermon_ai_search_enabled",
+  sermonAiSearchCreditCost: "sermon_ai_search_credit_cost",
 } as const;
 
 /** Liste alignée sur `app_setting_is_public_readable` côté SQL. */
@@ -44,6 +47,8 @@ export type PublicHomePageSettings = {
   voiceCreditCost: number;
   imageCreditCost: number;
   initialFreeCredits: number;
+  sermonAiSearchEnabled: boolean;
+  sermonAiSearchCreditCost: number;
 };
 
 export const defaultPublicHomePageSettings: PublicHomePageSettings = {
@@ -57,4 +62,6 @@ export const defaultPublicHomePageSettings: PublicHomePageSettings = {
   voiceCreditCost: 2,
   imageCreditCost: 3,
   initialFreeCredits: 5,
+  sermonAiSearchEnabled: true,
+  sermonAiSearchCreditCost: 2,
 };

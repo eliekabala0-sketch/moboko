@@ -58,9 +58,21 @@ export async function Masthead() {
         <div className="flex items-center gap-2 sm:gap-3">
           {email ? (
             <>
+              <Link
+                href="/billing"
+                className="hidden text-[13px] font-semibold text-[var(--accent)] transition hover:underline sm:inline"
+              >
+                Crédits
+              </Link>
               <span className="hidden max-w-[180px] truncate text-xs text-[var(--muted)] sm:inline">
                 {email}
               </span>
+              <Link
+                href="/billing"
+                className="inline text-[13px] font-semibold text-[var(--accent)] transition hover:underline sm:hidden"
+              >
+                Crédits
+              </Link>
               <SignOutButton />
             </>
           ) : (

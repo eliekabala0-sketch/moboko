@@ -50,6 +50,7 @@ export async function savePublicAppSettingsAction(
 
   revalidatePath("/");
   revalidatePath("/admin/settings");
+  revalidatePath("/sermons");
 }
 
 export async function uploadBrandingHeroAction(formData: FormData) {

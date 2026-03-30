@@ -8,6 +8,7 @@ type Props = {
 export function SermonLibrarySearchForm({ st, sy, sl, pq }: Props) {
   return (
     <form
+      id="filtres-sermons"
       className="moboko-card mt-8 space-y-6 p-6 sm:p-7"
       action="/sermons"
       method="get"

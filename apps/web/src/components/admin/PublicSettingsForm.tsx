@@ -42,6 +42,12 @@ export function PublicSettingsForm({ initial }: Props) {
   const [initialCredits, setInitialCredits] = useState(
     Number(initial[PUBLIC_APP_SETTING_KEYS.initialFreeCredits] ?? 5),
   );
+  const [sermonAi, setSermonAi] = useState(
+    Boolean(initial[PUBLIC_APP_SETTING_KEYS.sermonAiSearchEnabled]),
+  );
+  const [sermonAiCost, setSermonAiCost] = useState(
+    Number(initial[PUBLIC_APP_SETTING_KEYS.sermonAiSearchCreditCost] ?? 2),
+  );
 
   function save() {
     setErr(null);
@@ -58,6 +64,8 @@ export function PublicSettingsForm({ initial }: Props) {
           [PUBLIC_APP_SETTING_KEYS.voiceCreditCost]: Math.max(0, Math.floor(costVoice)),
           [PUBLIC_APP_SETTING_KEYS.imageCreditCost]: Math.max(0, Math.floor(costImage)),
           [PUBLIC_APP_SETTING_KEYS.initialFreeCredits]: Math.max(0, Math.floor(initialCredits)),
+          [PUBLIC_APP_SETTING_KEYS.sermonAiSearchEnabled]: sermonAi,
+          [PUBLIC_APP_SETTING_KEYS.sermonAiSearchCreditCost]: Math.max(0, Math.floor(sermonAiCost)),
         });
         setMessage("Paramètres enregistrés.");
         router.refresh();
@@ -124,7 +132,7 @@ export function PublicSettingsForm({ initial }: Props) {
           <p className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
             Crédits
           </p>
-          <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <label className="text-sm font-medium text-[var(--foreground)]">
               <span className="text-[var(--muted)]">À l&apos;inscription</span>
               <input
@@ -168,7 +176,35 @@ export function PublicSettingsForm({ initial }: Props) {
                 className="moboko-input mt-2 tabular-nums"
               />
             </label>
+            <label className="text-sm font-medium text-[var(--foreground)]">
+              <span className="text-[var(--muted)]">Recherche IA sermons</span>
+              <input
+                type="number"
+                min={0}
+                value={sermonAiCost}
+                onChange={(e) => setSermonAiCost(Number(e.target.value))}
+                className="moboko-input mt-2 tabular-nums"
+              />
+              <span className="mt-1.5 block text-[11px] font-normal leading-relaxed text-[var(--muted)]">
+                Par requête sur la page Sermons (débit séparé du chat).
+              </span>
+            </label>
           </div>
+        </div>
+
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
+            Bibliothèque sermons
+          </p>
+          <label className="mt-3 flex cursor-pointer items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)]/50 px-4 py-3 transition hover:border-[var(--border-strong)]">
+            <input
+              type="checkbox"
+              checked={sermonAi}
+              onChange={(e) => setSermonAi(e.target.checked)}
+              className="h-4 w-4 rounded border-[var(--border-strong)] bg-[var(--surface-elevated)] text-[var(--primary)]"
+            />
+            <span className="text-sm text-[var(--foreground)]">Recherche intelligente (IA) sur les sermons</span>
+          </label>
         </div>
 
         <button
