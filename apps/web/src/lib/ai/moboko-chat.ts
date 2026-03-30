@@ -39,8 +39,24 @@ export function historyToOpenAIMessages(
   return out;
 }
 
+/** Lit uniquement `process.env.OPENAI_API_KEY` (serveur / Railway). Aucun fallback vers fichier ou clé publique. */
+function readOpenAIApiKey(): string | null {
+  let key = process.env.OPENAI_API_KEY?.trim();
+  if (!key) return null;
+  if (key.toLowerCase().startsWith("bearer ")) {
+    key = key.slice(7).trim();
+  }
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"))
+  ) {
+    key = key.slice(1, -1).trim();
+  }
+  return key || null;
+}
+
 export function getOpenAIClient() {
-  const key = process.env.OPENAI_API_KEY?.trim();
+  const key = readOpenAIApiKey();
   if (!key) return null;
   return new OpenAI({
     apiKey: key,

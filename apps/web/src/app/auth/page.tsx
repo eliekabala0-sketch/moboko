@@ -1,5 +1,6 @@
 import { AuthForm } from "@/components/auth/AuthForm";
 import Link from "next/link";
+import { Suspense } from "react";
 
 export default function AuthPage() {
   return (
@@ -26,14 +27,18 @@ export default function AuthPage() {
             Accès Moboko
           </h1>
           <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-[var(--muted)]">
-            Connexion ou inscription — profil synchronisé automatiquement (
-            <code className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-1.5 py-0.5 text-[11px] text-[var(--accent)]/90">
-              profiles
-            </code>
-            ).
+            Google, Apple, SMS ou e-mail — un seul compte Supabase, profil et crédits partagés.
           </p>
         </div>
-        <AuthForm />
+        <Suspense
+          fallback={
+            <div className="moboko-card mx-auto w-full max-w-md animate-pulse p-12 text-center text-sm text-[var(--muted)]">
+              Chargement…
+            </div>
+          }
+        >
+          <AuthForm />
+        </Suspense>
       </div>
     </div>
   );

@@ -9,6 +9,7 @@
   --surface: #12192b;
   --surface-elevated: #1a2338;
   --surface-glow: rgba(91, 127, 200, 0.06);
+  --overlay: rgba(8, 11, 18, 0.78);
 
   /* Bordures & relief */
   --border: rgba(255, 255, 255, 0.08);

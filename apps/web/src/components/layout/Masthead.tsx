@@ -5,6 +5,7 @@ import Link from "next/link";
 const nav = [
   { href: "/chat", label: "Assistant" },
   { href: "/posts", label: "Enseignements" },
+  { href: "/sermons", label: "Sermons" },
   { href: "/projection", label: "Projection" },
 ];
 
