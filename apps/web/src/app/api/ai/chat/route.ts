@@ -12,6 +12,7 @@ import {
   fetchSermonSearchCandidates,
   type SermonParagraphCandidate,
 } from "@/lib/sermons/ai-sermon-search-server";
+import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
 import { getUserFromApiRequest } from "@/lib/supabase/api-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
 import {
@@ -23,7 +24,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 60;
 
 type Body = {
   conversationId: string;
@@ -96,7 +97,14 @@ type SemanticIntent = {
   maybe_meant: string | null;
 };
 
-type AiPick = { i?: number; note?: string };
+type AiPick = { i?: number };
+
+const EMPTY_CONCORDANCE_MESSAGE = "Aucun paragraphe exact trouvé pour cette recherche.";
+
+const MOBOKO_SOURCE_ONLY_LOCK = `Règles Moboko (impératif) :
+- Moboko ne doit jamais utiliser des connaissances générales.
+- Moboko ne répond que par des passages présents dans la base.
+- Si aucun passage n’est trouvé dans les extraits fournis, Moboko ne répond pas à l’utilisateur : produis uniquement le JSON demandé sans autre texte, par ex. {"picks":[]}.`;
 
 function parseSemanticIntent(raw: string): SemanticIntent | null {
   let data: unknown;
@@ -193,7 +201,7 @@ function parseSemanticIntent(raw: string): SemanticIntent | null {
   };
 }
 
-function parseAiPicks(raw: string, n: number): { picks: AiPick[]; summary: string | null } | null {
+function parseAiPicks(raw: string, n: number): { picks: AiPick[] } | null {
   let data: unknown;
   try {
     data = JSON.parse(raw);
@@ -202,9 +210,8 @@ function parseAiPicks(raw: string, n: number): { picks: AiPick[]; summary: strin
   }
   if (!data || typeof data !== "object") return null;
   const o = data as Record<string, unknown>;
-  const summary = typeof o.summary === "string" ? o.summary.trim().slice(0, 320) : null;
   const arr = o.picks;
-  if (!Array.isArray(arr)) return { picks: [], summary };
+  if (!Array.isArray(arr)) return { picks: [] };
   const picks: AiPick[] = [];
   const used = new Set<number>();
   for (const item of arr) {
@@ -213,11 +220,35 @@ function parseAiPicks(raw: string, n: number): { picks: AiPick[]; summary: strin
     const i = typeof p.i === "number" && Number.isInteger(p.i) ? p.i : null;
     if (i === null || i < 1 || i > n || used.has(i)) continue;
     used.add(i);
-    const note = typeof p.note === "string" ? p.note.trim().slice(0, 180) : undefined;
-    picks.push({ i, note });
-    if (picks.length >= 4) break;
+    picks.push({ i });
+    if (picks.length >= 8) break;
   }
-  return { picks, summary };
+  return { picks };
+}
+
+async function enrichRankedWithNeighbors(
+  admin: NonNullable<ReturnType<typeof createSupabaseServiceClient>>,
+  ranked: { c: SermonParagraphCandidate }[],
+) {
+  const results: Record<string, unknown>[] = [];
+  for (const { c } of ranked) {
+    const n = await fetchNeighborParagraphs(admin, c.slug, c.paragraph_number);
+    results.push({
+      slug: c.slug,
+      title: c.title,
+      location: c.location ?? null,
+      date:
+        (c.preached_on && String(c.preached_on).trim()) ||
+        (c.year != null ? String(c.year) : null),
+      paragraph_number: c.paragraph_number,
+      paragraph_text: c.paragraph_text,
+      prev_paragraph_number: n.prev_paragraph_number,
+      prev_paragraph_text: n.prev_paragraph_text,
+      next_paragraph_number: n.next_paragraph_number,
+      next_paragraph_text: n.next_paragraph_text,
+    });
+  }
+  return results;
 }
 
 async function extractSemanticIntent(
@@ -227,7 +258,9 @@ async function extractSemanticIntent(
   const messages: ChatCompletionMessageParam[] = [
     {
       role: "system",
-      content: `Analyse une question française pour recherche de passages de sermons.
+      content: `${MOBOKO_SOURCE_ONLY_LOCK}
+
+Tu analyses une question française UNIQUEMENT pour produire des paramètres de recherche (aucune réponse à l’utilisateur, aucun sermon inventé).
 Retourne UNIQUEMENT un JSON :
 {"search_mode":"...","user_need":"...","intent":"...","topic":"...","concepts":["..."],"expansions":["..."],"content_types":["..."],"quoted_phrase":"...|null","sermon_hint":"...|null","year_from":1963|null,"year_to":1965|null,"maybe_meant":"...|null"}
 search_mode parmi: exact_quote_search, theme_search, situation_search, story_search, prayer_search, doctrinal_search, time_bounded_search, preaching_prep_search, comfort_or_exhortation_search, sermon_title_then_topic_search.
@@ -240,8 +273,9 @@ Règles:
     { role: "user", content: query },
   ];
   const raw = await runStructuredJsonCompletion(openai, messages, {
-    maxTokens: 450,
+    maxTokens: 280,
     temperature: 0.1,
+    timeoutMs: 22_000,
   });
   if (!raw) return null;
   return parseSemanticIntent(raw);
@@ -277,39 +311,35 @@ async function fetchSemanticCandidates(
   ]
     .map((x) => x.trim())
     .filter((x, i, arr) => x.length >= 3 && arr.indexOf(x) === i)
-    .slice(0, 18);
+    .slice(0, 10);
+  const MAX_CANDIDATES = 200;
   const byKey = new Map<string, SermonParagraphCandidate>();
   const collect = async (q: string) => {
     const rows = await fetchSermonSearchCandidates(admin, q);
     for (const c of rows) {
       const k = `${c.slug}:${c.paragraph_number}`;
       if (!byKey.has(k)) byKey.set(k, c);
-      if (byKey.size >= 520) break;
+      if (byKey.size >= MAX_CANDIDATES) break;
     }
   };
-  // Wave A: principal + intent.
-  for (const q of queries.slice(0, 4)) {
+  for (const q of queries.slice(0, 3)) {
     await collect(q);
-    if (byKey.size >= 220) break;
+    if (byKey.size >= MAX_CANDIDATES) break;
   }
-  // Wave B: concepts/expansions.
-  if (byKey.size < 220) {
-    for (const q of queries.slice(4, 12)) {
+  if (byKey.size < MAX_CANDIDATES) {
+    for (const q of queries.slice(3, 8)) {
       await collect(q);
-      if (byKey.size >= 340) break;
+      if (byKey.size >= MAX_CANDIDATES) break;
     }
   }
-  // Wave C: fallback large.
-  if (byKey.size < 180) {
-    const broad = [semantic?.topic ?? "", ...(semantic?.concepts ?? []).slice(0, 4)]
+  if (byKey.size < 80) {
+    const broad = [semantic?.topic ?? "", ...(semantic?.concepts ?? []).slice(0, 3)]
       .filter(Boolean)
       .join(" ");
-    if (broad.trim().length >= 3) {
-      await collect(broad);
-    }
-    for (const q of queries.slice(12)) {
+    if (broad.trim().length >= 3) await collect(broad);
+    for (const q of queries.slice(8)) {
       await collect(q);
-      if (byKey.size >= 420) break;
+      if (byKey.size >= MAX_CANDIDATES) break;
     }
   }
   let out = Array.from(byKey.values());
@@ -339,13 +369,13 @@ async function fetchSemanticCandidates(
     return s;
   };
   out.sort((a, b) => score(b) - score(a));
-  return out.slice(0, 420);
+  return out.slice(0, 200);
 }
 
 function buildRankingPrompt(query: string, semantic: SemanticIntent | null, candidates: SermonParagraphCandidate[]) {
   const lines = candidates.map((c, idx) => {
     const y = c.year != null ? String(c.year) : "";
-    return `${idx + 1}\t${c.slug}\t${c.title}\t${y}\t${c.paragraph_number}\t${clipForPrompt(c.paragraph_text, 480)}`;
+    return `${idx + 1}\t${c.slug}\t${c.title}\t${y}\t${c.paragraph_number}\t${clipForPrompt(c.paragraph_text, 320)}`;
   });
   return [
     `Question: ${query}`,
@@ -357,46 +387,6 @@ function buildRankingPrompt(query: string, semantic: SemanticIntent | null, cand
     "Extraits candidats (n° | slug | titre | année | paragraphe | extrait):",
     lines.join("\n"),
   ].join("\n");
-}
-
-function composeSourcesFirstReply(
-  query: string,
-  semantic: SemanticIntent | null,
-  ranked: { c: SermonParagraphCandidate; note: string | null }[],
-  summary: string | null,
-) {
-  if (ranked.length === 0) {
-    const hints = (semantic?.concepts ?? []).slice(0, 4).join(", ");
-    return [
-      "Je n’ai pas trouvé de passage suffisamment pertinent dans les sermons pour cette formulation.",
-      hints ? `Pistes proches: ${hints}` : null,
-      "Reformulez en précisant le thème, un titre de sermon, ou une idée centrale.",
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-  }
-
-  const lines: string[] = [];
-  lines.push(summary || "Voici les passages les plus pertinents trouvés dans les sermons.");
-  lines.push("");
-  lines.push(`Question: ${query}`);
-  lines.push("");
-  for (const [idx, item] of ranked.entries()) {
-    const c = item.c;
-    lines.push(`### Source ${idx + 1}`);
-    lines.push(`- Titre: ${c.title}`);
-    lines.push(`- Slug: ${c.slug}`);
-    lines.push(`- Lieu: ${c.location || "non indiqué"}`);
-    lines.push(`- Date: ${c.preached_on || (c.year != null ? String(c.year) : "non indiquée")}`);
-    lines.push(`- Paragraphe: §${c.paragraph_number}`);
-    if (item.note) lines.push(`- Pertinence: ${item.note}`);
-    lines.push("");
-    lines.push("Texte:");
-    lines.push(c.paragraph_text);
-    lines.push("");
-  }
-  lines.push("Orientation: lisez ces passages et tirez votre conclusion à la lumière de la Parole.");
-  return lines.join("\n");
 }
 
 async function maybeInjectSermonContext(
@@ -566,7 +556,6 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "texte_vide" }, { status: 400 });
       }
       userContent = t;
-      completionMessages.push({ role: "user", content: t });
     } else if (body.mode === "image") {
       const path = body.imageStoragePath?.trim();
       if (!path || !pathBelongsToUser(path, user.id)) {
@@ -635,6 +624,10 @@ export async function POST(request: Request) {
 
     let assistantText = "";
     let sermonContextCount = 0;
+    let metaAssistant: Record<string, unknown> = {
+      model: getChatModel(),
+      sermon_context_count: 0,
+    };
 
     if (body.mode === "text" && userContent) {
       try {
@@ -649,34 +642,70 @@ export async function POST(request: Request) {
         sermonContextCount = candidates.length;
 
         if (candidates.length > 0) {
-          const rankRaw = await runStructuredJsonCompletion(
-            openai,
-            [
-              {
-                role: "system",
-                content:
-                  'Classe les extraits de sermons les plus pertinents. Réponse JSON stricte: {"summary":"...","picks":[{"i":1,"note":"..."}]}',
-              },
-              { role: "user", content: buildRankingPrompt(userContent, semantic, candidates) },
-            ],
-            { maxTokens: 900, temperature: 0.1 },
-          );
+          let rankRaw: string;
+          try {
+            rankRaw = await runStructuredJsonCompletion(
+              openai,
+              [
+                {
+                  role: "system",
+                  content: `${MOBOKO_SOURCE_ONLY_LOCK}
+
+Tu classes des extraits de sermons par pertinence (liste numérotée fournie).
+Réponds UNIQUEMENT par un JSON valide : {"picks":[{"i":1},...]}
+Maximum 8 indices, du plus pertinent au moins pertinent. Chaque i doit être présent dans la liste.
+Aucune phrase hors JSON, aucun champ supplémentaire. Si rien ne convient : {"picks":[]}.`,
+                },
+                { role: "user", content: buildRankingPrompt(userContent, semantic, candidates) },
+              ],
+              { maxTokens: 360, temperature: 0.08, timeoutMs: 28_000 },
+            );
+          } catch (rankErrOn) {
+            console.error("[api/ai/chat] classement_ia", rankErrOn);
+            rankRaw = "";
+          }
+
           const parsed = rankRaw ? parseAiPicks(rankRaw, candidates.length) : null;
-          const ranked = (parsed?.picks ?? [])
-            .filter((p): p is { i: number; note?: string } => typeof p.i === "number")
-            .map((p) => ({ c: candidates[p.i - 1], note: p.note?.trim() || null }))
-            .filter((x): x is { c: SermonParagraphCandidate; note: string | null } => Boolean(x.c));
-          assistantText = composeSourcesFirstReply(userContent, semantic, ranked, parsed?.summary ?? null);
+          const pickList = parsed?.picks ?? [];
+          const ranked = pickList
+            .filter((p): p is { i: number } => typeof p.i === "number")
+            .map((p) => ({ c: candidates[p.i - 1] }))
+            .filter((x): x is { c: SermonParagraphCandidate } => Boolean(x.c));
+
+          if (ranked.length === 0) {
+            assistantText = EMPTY_CONCORDANCE_MESSAGE;
+            metaAssistant = {
+              model: getChatModel(),
+              sermon_context_count: sermonContextCount,
+              moboko_kind: "sermon_concordance_empty",
+            };
+          } else {
+            const results = await enrichRankedWithNeighbors(admin, ranked);
+            assistantText = "";
+            metaAssistant = {
+              model: getChatModel(),
+              sermon_context_count: sermonContextCount,
+              moboko_kind: "sermon_concordance",
+              results,
+            };
+          }
         } else {
-          assistantText = composeSourcesFirstReply(userContent, semantic, [], null);
+          assistantText = EMPTY_CONCORDANCE_MESSAGE;
+          metaAssistant = {
+            model: getChatModel(),
+            sermon_context_count: 0,
+            moboko_kind: "sermon_concordance_empty",
+          };
         }
-      } catch {
-        sermonContextCount = await maybeInjectSermonContext(
-          completionMessages,
-          userContent,
-          admin,
-        );
-        assistantText = await runChatCompletion(openai, completionMessages);
+      } catch (e) {
+        console.error("[api/ai/chat] pipeline_sermons", e);
+        sermonContextCount = 0;
+        assistantText = EMPTY_CONCORDANCE_MESSAGE;
+        metaAssistant = {
+          model: getChatModel(),
+          sermon_context_count: 0,
+          moboko_kind: "sermon_concordance_empty",
+        };
       }
     } else {
       sermonContextCount = await maybeInjectSermonContext(
@@ -685,16 +714,23 @@ export async function POST(request: Request) {
         admin,
       );
       assistantText = await runChatCompletion(openai, completionMessages);
+      metaAssistant = {
+        model: getChatModel(),
+        sermon_context_count: sermonContextCount,
+      };
     }
 
-    if (!assistantText) {
+    const hasConcordanceList =
+      metaAssistant.moboko_kind === "sermon_concordance" &&
+      Array.isArray(metaAssistant.results) &&
+      (metaAssistant.results as unknown[]).length > 0;
+    const hasConcordanceEmpty =
+      metaAssistant.moboko_kind === "sermon_concordance_empty" &&
+      assistantText.trim() === EMPTY_CONCORDANCE_MESSAGE;
+
+    if (assistantText.trim().length === 0 && !hasConcordanceList && !hasConcordanceEmpty) {
       return NextResponse.json({ error: "reponse_ia_vide" }, { status: 502 });
     }
-
-    const metaAssistant = {
-      model: getChatModel(),
-      sermon_context_count: sermonContextCount,
-    };
 
     const { data: userIns, error: uErr } = await admin
       .from("messages")

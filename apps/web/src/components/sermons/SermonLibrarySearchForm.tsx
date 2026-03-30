@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 type Props = {
   st: string;
   sy: string;
@@ -81,12 +83,12 @@ export function SermonLibrarySearchForm({ st, sy, sl, pq }: Props) {
         <button type="submit" className="moboko-btn-primary px-6 py-3 text-[14px]">
           Rechercher
         </button>
-        <a
+        <Link
           href="/sermons"
           className="inline-flex items-center rounded-full border border-[var(--border)] px-6 py-3 text-[14px] font-semibold text-[var(--muted)] transition hover:border-[var(--border-strong)] hover:text-[var(--foreground)]"
         >
           Réinitialiser
-        </a>
+        </Link>
       </div>
     </form>
   );

@@ -1,20 +1,10 @@
 "use client";
 
+import { coerceConcordanceHits } from "@/lib/sermons/concordance-types";
+import type { ConcordanceHit } from "@/lib/sermons/concordance-types";
 import Link from "next/link";
 import { useState } from "react";
-
-type SearchResult = {
-  slug: string;
-  title: string;
-  year: number | null;
-  preached_on?: string | null;
-  location?: string | null;
-  paragraph_number: number;
-  paragraph_text: string;
-  read_href: string;
-  project_href: string;
-  note: string | null;
-};
+import { ConcordanceHitsView } from "./ConcordanceHitsView";
 
 type Props = {
   enabled: boolean;
@@ -28,8 +18,7 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
   const [pending, setPending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [errAction, setErrAction] = useState<ErrAction>(null);
-  const [summary, setSummary] = useState<string | null>(null);
-  const [results, setResults] = useState<SearchResult[]>([]);
+  const [hits, setHits] = useState<ConcordanceHit[]>([]);
   const [billingLine, setBillingLine] = useState<string | null>(null);
   const [hasSearchedOk, setHasSearchedOk] = useState(false);
 
@@ -37,7 +26,6 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
     e.preventDefault();
     setErr(null);
     setErrAction(null);
-    setSummary(null);
     setBillingLine(null);
     setHasSearchedOk(false);
     const q = query.trim();
@@ -47,7 +35,7 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
       return;
     }
     setPending(true);
-    setResults([]);
+    setHits([]);
     try {
       const res = await fetch("/api/ai/sermons-search", {
         method: "POST",
@@ -87,16 +75,8 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
         setErrAction(null);
         return;
       }
-      setResults(list as SearchResult[]);
+      setHits(coerceConcordanceHits(list));
       setHasSearchedOk(true);
-
-      let sum =
-        typeof data.summary === "string" && data.summary.trim() ? data.summary.trim() : null;
-      const hint = typeof data.hint === "string" ? data.hint : null;
-      if (list.length === 0 && hint && !sum) {
-        sum = hint;
-      }
-      setSummary(sum);
 
       const charged = Number(data.credits_charged);
       const cost = Number(data.credit_cost);
@@ -138,7 +118,7 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
   }
 
   const showResultsBlock = hasSearchedOk;
-  const showEmptyOk = hasSearchedOk && results.length === 0;
+  const showEmptyOk = hasSearchedOk && hits.length === 0;
 
   return (
     <section className="moboko-card mt-8 p-6 sm:p-7">
@@ -146,8 +126,8 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
         Recherche intelligente
       </p>
       <p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">
-        Décrivez en français ce que vous cherchez (thème, idée, contexte). L’IA classe des extraits déjà présents dans la
-        base ; les liens ouvrent la lecture ou la projection sur le bon paragraphe.
+        Décrivez en français ce que vous cherchez. Le moteur interroge la base ; l’IA comprend la demande, élargit
+        sémantiquement et classe les extraits — sans commentaire sur le fond.
         {creditCost > 0 ? (
           <>
             {" "}
@@ -158,13 +138,10 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
           <> Recherche sans débit de crédits pour l’instant.</>
         )}
       </p>
-      <p className="mt-3 text-xs leading-relaxed text-[var(--muted)] opacity-90">
-        Astuce : mentionnez un titre de sermon ou des mots du fond pour aider le moteur à proposer des extraits pertinents.
-      </p>
 
       <form onSubmit={onSubmit} className="mt-5 space-y-4">
         <label className="block text-sm font-medium text-[var(--foreground)]">
-          <span className="text-[var(--muted)]">Votre question</span>
+          <span className="text-[var(--muted)]">Votre recherche</span>
           <textarea
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -186,7 +163,7 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
             disabled={pending}
             className="moboko-btn-primary px-6 py-3 text-[14px] disabled:opacity-50"
           >
-            {pending ? "Recherche…" : "Rechercher avec l’IA"}
+            {pending ? "Recherche…" : "Rechercher"}
           </button>
           {billingLine ? (
             <span className="text-xs text-[var(--muted)]" role="status">
@@ -248,62 +225,14 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
 
       {showResultsBlock ? (
         <div className="mt-10">
-          <h2 className="text-lg font-semibold text-[var(--foreground)]">Résultats (IA)</h2>
           {showEmptyOk ? (
-            <div className="moboko-card mt-4 p-6">
+            <div className="moboko-card p-6">
               <p className="text-sm leading-relaxed text-[var(--foreground)]">
-                Aucun passage n’a été mis en avant pour cette question.
+                Aucun paragraphe exact trouvé pour cette recherche.
               </p>
-              {summary ? (
-                <p className="mt-3 text-sm leading-relaxed text-[var(--muted)]">{summary}</p>
-              ) : (
-                <p className="mt-3 text-sm leading-relaxed text-[var(--muted)]">
-                  Essayez la recherche plein texte plus haut avec des mots présents dans les sermons, ou reformulez avec
-                  le titre du sermon et un thème précis.
-                </p>
-              )}
             </div>
           ) : (
-            <>
-              {summary ? (
-                <p className="mt-3 text-sm leading-relaxed text-[var(--muted)]">{summary}</p>
-              ) : null}
-              <ul className="mt-4 space-y-3">
-                {results.map((r) => (
-                  <li key={`${r.slug}-${r.paragraph_number}`}>
-                    <div className="moboko-card p-5 transition hover:border-[var(--border-strong)]">
-                      <p className="font-medium text-[var(--foreground)]">{r.title}</p>
-                      <p className="mt-1 text-xs text-[var(--accent)]">
-                        Paragraphe [{r.paragraph_number}]
-                        {r.year != null ? ` · ${r.year}` : ""}
-                      </p>
-                      {r.note ? (
-                        <p className="mt-2 text-xs leading-relaxed text-[var(--muted)]">
-                          <span className="font-medium text-[var(--foreground)]/90">Pourquoi ce passage : </span>
-                          {r.note}
-                        </p>
-                      ) : null}
-                      <p className="mt-2 text-xs text-[var(--muted)]">
-                        {[r.location, r.preached_on || (r.year != null ? String(r.year) : null)]
-                          .filter(Boolean)
-                          .join(" · ") || "Date/lieu non indiqués"}
-                      </p>
-                      <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-[var(--muted)]">
-                        {r.paragraph_text}
-                      </p>
-                      <div className="mt-4 flex flex-wrap gap-4 text-sm font-medium">
-                        <Link href={r.read_href} className="text-[var(--accent)] hover:underline">
-                          Lire (ancre)
-                        </Link>
-                        <Link href={r.project_href} className="text-[var(--foreground)] hover:underline">
-                          Projection
-                        </Link>
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </>
+            <ConcordanceHitsView hits={hits} />
           )}
         </div>
       ) : null}

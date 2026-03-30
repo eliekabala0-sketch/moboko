@@ -3,6 +3,7 @@ import {
   fetchSermonSearchCandidates,
   type SermonParagraphCandidate,
 } from "@/lib/sermons/ai-sermon-search-server";
+import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
 import { getOpenAIClient, runStructuredJsonCompletion } from "@/lib/ai/moboko-chat";
 import { getUserFromApiRequest } from "@/lib/supabase/api-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
@@ -60,9 +61,9 @@ function parseBody(raw: unknown): string | null {
   return t;
 }
 
-type AiPick = { i?: number; note?: string };
+type AiPick = { i?: number };
 
-function parseAiPicks(raw: string, n: number): { picks: AiPick[]; summary: string | null } | null {
+function parseAiPicks(raw: string, n: number): { picks: AiPick[] } | null {
   let data: unknown;
   try {
     data = JSON.parse(raw);
@@ -71,10 +72,9 @@ function parseAiPicks(raw: string, n: number): { picks: AiPick[]; summary: strin
   }
   if (!data || typeof data !== "object") return null;
   const o = data as Record<string, unknown>;
-  const summary = typeof o.summary === "string" ? o.summary.trim().slice(0, 500) : null;
   const arr = o.picks;
   if (arr === undefined) {
-    return { picks: [], summary };
+    return { picks: [] };
   }
   if (!Array.isArray(arr)) return null;
   const picks: AiPick[] = [];
@@ -85,15 +85,17 @@ function parseAiPicks(raw: string, n: number): { picks: AiPick[]; summary: strin
     const i = typeof p.i === "number" && Number.isInteger(p.i) ? p.i : null;
     if (i === null || i < 1 || i > n || used.has(i)) continue;
     used.add(i);
-    const note =
-      typeof p.note === "string" ? p.note.trim().slice(0, 220) : undefined;
-    picks.push({ i, note });
-    if (picks.length >= 8) break;
+    picks.push({ i });
+    if (picks.length >= 12) break;
   }
-  return { picks, summary };
+  return { picks };
 }
 
-function buildRankingPrompt(query: string, candidates: SermonParagraphCandidate[]): string {
+function buildRankingPrompt(
+  query: string,
+  semantic: SemanticIntent | null,
+  candidates: SermonParagraphCandidate[],
+): string {
   const lines = candidates.map((c, idx) => {
     const y = c.year != null ? String(c.year) : "";
     const clip = clipForPrompt(c.paragraph_text);
@@ -102,10 +104,16 @@ function buildRankingPrompt(query: string, candidates: SermonParagraphCandidate[
   return [
     `Question de l'utilisateur (français) :`,
     query,
+    semantic?.intent ? `Intent : ${semantic.intent}` : "",
+    semantic?.search_mode ? `Mode : ${semantic.search_mode}` : "",
+    semantic?.topic ? `Thème : ${semantic.topic}` : "",
+    semantic?.concepts?.length ? `Concepts : ${semantic.concepts.join(", ")}` : "",
     "",
-    "Extraits numérotés (TSV : n° | slug | titre | année | n° paragraphe | extrait). Tu ne peux citer que ces numéros.",
+    "Extraits numérotés (TSV : n° | slug | titre | année | n° paragraphe | extrait). Réponds uniquement avec des indices i valides.",
     lines.join("\n"),
-  ].join("\n");
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
 }
 
 function parseSemanticIntent(raw: string): SemanticIntent | null {
@@ -420,16 +428,16 @@ export async function POST(request: Request) {
   const candidates = await fetchSemanticCandidates(admin, query, semantic);
 
   if (candidates.length === 0) {
+    const ref =
+      semantic?.maybe_meant?.trim() || semantic?.expansions?.[0]?.trim() || null;
     return NextResponse.json({
       ok: true,
       results: [],
-      summary: null,
+      reformulation: ref ? ref.slice(0, 120) : null,
       credits_charged: 0,
       credit_cost: creditCost,
       balance_after: balance,
       billing_skipped: billingExempt,
-      hint:
-        "Aucun passage pertinent trouvé pour cette formulation. Essayez une reformulation plus précise (thème, titre de sermon, idée clé).",
     });
   }
 
@@ -445,27 +453,18 @@ export async function POST(request: Request) {
     );
   }
 
-  const userPrompt = buildRankingPrompt(query, candidates);
+  const userPrompt = buildRankingPrompt(query, semantic, candidates);
   const messages: ChatCompletionMessageParam[] = [
     {
       role: "system",
-      content: `Tu es un assistant de recherche pour une bibliothèque de sermons chrétiens en français.
-On te donne une question en langage naturel et une liste d'extraits numérotés (déjà issus de la base).
-Ta tâche : choisir les extraits qui répondent le mieux à la question (sens, thème, formulation), y compris les reformulations et les questions implicites.
-Tu ne dois JAMAIS inventer de sermon, de titre ou de numéro de paragraphe : uniquement des numéros "i" présents dans la liste (1 à N).
-Réponds en JSON strict avec le schéma :
-{"summary":"une phrase courte sur ce que tu as retenu (ou chaîne vide)","picks":[{"i":1,"note":"pourquoi ce passage répond (court)"}]}
-Maximum 8 entrées dans picks, les plus pertinentes en premier. Si rien ne convient, picks [].`,
+      content: `Tu classes des extraits de sermons déjà tirés de la base (liste numérotée).
+Choisis ceux qui répondent le mieux à la question (sens, thème, reformulations).
+N'invente jamais de numéro : uniquement des "i" présents dans la liste.
+Réponds UNIQUEMENT par un JSON valide : {"picks":[{"i":1},...]}
+Maximum 12 entrées, les plus pertinentes en premier. Aucun summary, aucune note, aucun texte hors JSON.
+Si rien ne convient : {"picks":[]}`,
     },
-    {
-      role: "user",
-      content:
-        `${userPrompt}\n\n` +
-        `Contexte sémantique déduit:\n` +
-        `- intent: ${semantic?.intent || "(non déterminé)"}\n` +
-        `- concepts: ${(semantic?.concepts ?? []).join(", ") || "(aucun)"}\n` +
-        `- maybe_meant: ${semantic?.maybe_meant || "(aucun)"}\n`,
-    },
+    { role: "user", content: userPrompt },
   ];
 
   let rawJson: string;
@@ -494,30 +493,45 @@ Maximum 8 entrées dans picks, les plus pertinentes en premier. Si rien ne convi
     );
   }
 
-  const { picks, summary } = parsed;
+  const { picks } = parsed;
 
-  const results = picks
-    .filter((pick): pick is { i: number; note?: string } => typeof pick.i === "number")
+  const baseResults = picks
+    .filter((pick): pick is { i: number } => typeof pick.i === "number")
     .map((pick) => {
-    const c = candidates[pick.i - 1];
-    if (!c) {
-      return null;
-    }
-    const slugEnc = encodeURIComponent(c.slug);
-    return {
-      slug: c.slug,
-      title: c.title,
-      year: c.year,
-      preached_on: c.preached_on,
-      location: c.location,
-      paragraph_number: c.paragraph_number,
-      paragraph_text: c.paragraph_text,
-      read_href: `/sermons/${slugEnc}#p-${c.paragraph_number}`,
-      project_href: `/sermons/${slugEnc}/project?p=${c.paragraph_number}`,
-      note: pick.note?.trim() || null,
-    };
-  })
+      const c = candidates[pick.i - 1];
+      if (!c) return null;
+      return {
+        slug: c.slug,
+        title: c.title,
+        year: c.year,
+        preached_on: c.preached_on,
+        location: c.location,
+        paragraph_number: c.paragraph_number,
+        paragraph_text: c.paragraph_text,
+      };
+    })
     .filter((r): r is NonNullable<typeof r> => r != null);
+
+  const results: Record<string, unknown>[] = [];
+  for (const r of baseResults) {
+    const n = await fetchNeighborParagraphs(admin, r.slug, r.paragraph_number);
+    results.push({
+      slug: r.slug,
+      title: r.title,
+      year: r.year,
+      preached_on: r.preached_on,
+      location: r.location ?? null,
+      paragraph_number: r.paragraph_number,
+      paragraph_text: r.paragraph_text,
+      prev_paragraph_number: n.prev_paragraph_number,
+      prev_paragraph_text: n.prev_paragraph_text,
+      next_paragraph_number: n.next_paragraph_number,
+      next_paragraph_text: n.next_paragraph_text,
+    });
+  }
+
+  const reformulationWhenEmpty =
+    semantic?.maybe_meant?.trim() || semantic?.expansions?.[0]?.trim() || null;
 
   let balanceAfter = balance;
   let billingSkipped = billingExempt;
@@ -557,8 +571,10 @@ Maximum 8 entrées dans picks, les plus pertinentes en premier. Si rien ne convi
   return NextResponse.json({
     ok: true,
     results,
-    summary,
-    semantic,
+    reformulation:
+      results.length === 0 && reformulationWhenEmpty
+        ? reformulationWhenEmpty.slice(0, 120)
+        : null,
     credits_charged: creditsDebited,
     credit_cost: creditCost,
     balance_after: balanceAfter,

@@ -9,7 +9,6 @@ type Props = {
   date: string | null;
   paragraphNumber: number;
   paragraphText: string;
-  note?: string | null;
 };
 
 export function SermonSourceBlock({
@@ -19,7 +18,6 @@ export function SermonSourceBlock({
   date,
   paragraphNumber,
   paragraphText,
-  note,
 }: Props) {
   const slugEnc = encodeURIComponent(slug);
   const readHref = `/sermons/${slugEnc}#p-${paragraphNumber}`;
@@ -33,12 +31,6 @@ export function SermonSourceBlock({
         {location ? ` · ${location}` : ""}
         {date ? ` · ${date}` : ""}
       </p>
-      {note ? (
-        <p className="mt-2 text-xs leading-relaxed text-[var(--muted)]">
-          <span className="font-medium text-[var(--foreground)]/90">Pertinence: </span>
-          {note}
-        </p>
-      ) : null}
       <p className="mt-3 whitespace-pre-wrap text-[15px] leading-relaxed text-[var(--foreground)]">
         {paragraphText}
       </p>

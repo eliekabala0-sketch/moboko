@@ -1,5 +1,7 @@
 "use client";
 
+import { ConcordanceHitsView } from "@/components/sermons/ConcordanceHitsView";
+import { coerceConcordanceHits } from "@/lib/sermons/concordance-types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { ChatAttachmentRecord } from "@moboko/shared";
 import { useEffect, useState } from "react";
@@ -17,6 +19,7 @@ export type UiMessage = {
   media_mime: string | null;
   media_duration_ms: number | null;
   media_public_url: string | null;
+  metadata: Record<string, unknown> | null;
 };
 
 function parseAttachments(raw: unknown): ChatAttachmentRecord[] {
@@ -48,7 +51,19 @@ function Bubble({
   mediaSrc: string | null;
 }) {
   const mine = msg.role === "user";
-  const parsed = !mine && msg.kind === "text" ? parseAssistantSermonSources(msg.content) : null;
+  const meta =
+    !mine && msg.metadata && typeof msg.metadata === "object" && !Array.isArray(msg.metadata)
+      ? (msg.metadata as Record<string, unknown>)
+      : null;
+  const hits =
+    meta?.moboko_kind === "sermon_concordance" && Array.isArray(meta.results)
+      ? coerceConcordanceHits(meta.results)
+      : null;
+  const concordanceEmpty = meta?.moboko_kind === "sermon_concordance_empty";
+  const parsed =
+    !mine && msg.kind === "text" && !hits?.length && !concordanceEmpty
+      ? parseAssistantSermonSources(msg.content)
+      : null;
 
   return (
     <div className={`flex w-full ${mine ? "justify-end" : "justify-start"}`}>
@@ -76,11 +91,12 @@ function Bubble({
               className="mb-2 h-9 w-full max-w-xs opacity-95"
             />
           ) : null}
-          {parsed ? (
+          {hits && hits.length > 0 ? (
+            <ConcordanceHitsView hits={hits} />
+          ) : concordanceEmpty && msg.content ? (
+            <p className="whitespace-pre-wrap text-[15px] leading-[1.65] tracking-[0.01em]">{msg.content}</p>
+          ) : parsed ? (
             <div className="space-y-3">
-              <p className="whitespace-pre-wrap text-[15px] leading-[1.65] tracking-[0.01em]">
-                {parsed.intro}
-              </p>
               <div className="space-y-3">
                 {parsed.sources.map((s, i) => (
                   <SermonSourceBlock
@@ -91,23 +107,17 @@ function Bubble({
                     date={s.date}
                     paragraphNumber={s.paragraphNumber}
                     paragraphText={s.paragraphText}
-                    note={s.note}
                   />
                 ))}
               </div>
-              {parsed.more ? (
-                <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 px-4 py-3">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
-                    Pour aller plus loin
-                  </p>
-                  <p className="mt-1 text-sm leading-relaxed text-[var(--muted)]">{parsed.more}</p>
-                </div>
-              ) : null}
             </div>
           ) : msg.content ? (
             <p className="whitespace-pre-wrap text-[15px] leading-[1.65] tracking-[0.01em]">{msg.content}</p>
           ) : null}
-          {!msg.content && msg.kind !== "text" && !mediaSrc ? (
+          {!msg.content &&
+          msg.kind !== "text" &&
+          !mediaSrc &&
+          !(hits && hits.length > 0) ? (
             <p className={`text-sm ${mine ? "text-white/75" : "text-[var(--muted)]"}`}>Média</p>
           ) : null}
         </div>
@@ -123,28 +133,18 @@ type ParsedSource = {
   date: string | null;
   paragraphNumber: number;
   paragraphText: string;
-  note: string | null;
 };
 
 function parseAssistantSermonSources(content: string | null): {
-  intro: string;
   sources: ParsedSource[];
-  more: string | null;
 } | null {
   if (!content) return null;
   const lines = content.split("\n");
   const start = lines.findIndex((l) => l.trim().toLowerCase().startsWith("### source"));
   if (start < 0) return null;
 
-  const introLines = lines
-    .slice(0, start)
-    .map((l) => l.trim())
-    .filter((l) => l && !l.toLowerCase().startsWith("question:"));
-  const intro = introLines.join(" ").trim() || "Sources trouvées :";
-
   const sources: ParsedSource[] = [];
   let i = start;
-  let more: string | null = null;
 
   while (i < lines.length) {
     const h = lines[i]?.trim() ?? "";
@@ -158,7 +158,6 @@ function parseAssistantSermonSources(content: string | null): {
     let location: string | null = null;
     let date: string | null = null;
     let paragraphNumber = 0;
-    let note: string | null = null;
 
     while (i < lines.length) {
       const l = lines[i]?.trim() ?? "";
@@ -177,7 +176,7 @@ function parseAssistantSermonSources(content: string | null): {
       else if (l.startsWith("- Paragraphe:")) {
         const m = l.match(/§\s*(\d+)/);
         paragraphNumber = m ? Number(m[1]) : 0;
-      } else if (l.startsWith("- Pertinence:")) note = l.replace("- Pertinence:", "").trim() || null;
+      }
       i += 1;
     }
 
@@ -186,11 +185,6 @@ function parseAssistantSermonSources(content: string | null): {
       const l = lines[i] ?? "";
       const t = l.trim().toLowerCase();
       if (t.startsWith("### source")) break;
-      if (t.startsWith("orientation:")) {
-        more = l.trim().replace(/^orientation:\s*/i, "") || null;
-        i += 1;
-        break;
-      }
       paragraphLines.push(l);
       i += 1;
     }
@@ -204,13 +198,12 @@ function parseAssistantSermonSources(content: string | null): {
         date,
         paragraphNumber,
         paragraphText,
-        note,
       });
     }
   }
 
   if (sources.length === 0) return null;
-  return { intro, sources, more };
+  return { sources };
 }
 
 function slugifyFromTitle(title: string): string {
@@ -264,6 +257,11 @@ export function MessageList({ messages }: { messages: UiMessage[] }) {
 }
 
 export function mapRowToUiMessage(row: Record<string, unknown>): UiMessage {
+  const rawMeta = row.metadata;
+  const metadata =
+    rawMeta && typeof rawMeta === "object" && !Array.isArray(rawMeta)
+      ? (rawMeta as Record<string, unknown>)
+      : null;
   return {
     id: String(row.id),
     role: row.role as UiMessage["role"],
@@ -271,6 +269,7 @@ export function mapRowToUiMessage(row: Record<string, unknown>): UiMessage {
     content: (row.content as string) ?? null,
     created_at: String(row.created_at),
     attachments: parseAttachments(row.attachments),
+    metadata,
     media_bucket: (row.media_bucket as string) ?? null,
     media_storage_path: (row.media_storage_path as string) ?? null,
     media_mime: (row.media_mime as string) ?? null,

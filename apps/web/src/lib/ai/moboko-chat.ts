@@ -184,21 +184,25 @@ export async function runChatCompletion(
 export async function runStructuredJsonCompletion(
   openai: OpenAI,
   messages: ChatCompletionMessageParam[],
-  options?: { maxTokens?: number; temperature?: number },
+  options?: { maxTokens?: number; temperature?: number; timeoutMs?: number },
 ): Promise<string> {
   const max_tokens = options?.maxTokens ?? 1400;
   const temperature = options?.temperature ?? 0.2;
+  const reqOptions = options?.timeoutMs != null ? { timeout: options.timeoutMs } : undefined;
   const models = chatModelFallbacks(getChatModel());
   let lastErr: unknown;
   for (const model of models) {
     try {
-      const completion = await openai.chat.completions.create({
-        model,
-        messages,
-        temperature,
-        max_tokens,
-        response_format: { type: "json_object" },
-      });
+      const completion = await openai.chat.completions.create(
+        {
+          model,
+          messages,
+          temperature,
+          max_tokens,
+          response_format: { type: "json_object" },
+        },
+        reqOptions,
+      );
       const text = completion.choices[0]?.message?.content?.trim() || "";
       return text;
     } catch (e) {
