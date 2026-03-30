@@ -11,6 +11,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Composer } from "./Composer";
 import { mapRowToUiMessage, MessageList, type UiMessage } from "./MessageList";
+import Link from "next/link";
 
 type Props = {
   userId: string;
@@ -111,6 +112,23 @@ export function ChatExperience({ userId }: Props) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const conversationHistory = useMemo(() => {
+    return messages
+      .filter((m) => m.role === "user" && m.content)
+      .slice(-24)
+      .reverse()
+      .map((m) => ({
+        id: m.id,
+        preview: (m.content ?? "").replace(/\s+/g, " ").trim().slice(0, 72) || "(message)",
+        at: new Date(m.created_at).toLocaleString("fr-FR", {
+          day: "2-digit",
+          month: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      }));
+  }, [messages]);
 
   const loadFlags = useCallback(async () => {
     const keys = [
@@ -289,6 +307,21 @@ export function ChatExperience({ userId }: Props) {
     }
   }
 
+  async function handleNewChat() {
+    if (!conversationId || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { error: delErr } = await supabase.from("messages").delete().eq("conversation_id", conversationId);
+      if (delErr) throw delErr;
+      await loadMessages(conversationId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Impossible de créer une nouvelle discussion");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-5 py-28">
@@ -315,54 +348,65 @@ export function ChatExperience({ userId }: Props) {
   }
 
   return (
-    <div className="flex min-h-[calc(100vh-4.25rem)] flex-col">
-      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-3 sm:px-4">
-        <div className="border-b border-[var(--border)] py-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="space-y-1">
-              <h1 className="font-display text-xl font-semibold tracking-tight text-[var(--foreground)] sm:text-2xl">
-                Assistant
-              </h1>
-              <p className="max-w-md text-xs leading-relaxed text-[var(--muted)]">
-                Conversation sécurisée — réponses générées côté serveur (OpenAI).
-              </p>
-            </div>
-            {wallet ? <WalletBanner wallet={wallet} flags={flags} /> : null}
-          </div>
+    <div className="grid min-h-[calc(100vh-4.25rem)] grid-cols-1 lg:grid-cols-[17rem_minmax(0,1fr)]">
+      <aside className="border-b border-[var(--border)] bg-[var(--surface)]/40 p-4 lg:border-b-0 lg:border-r">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void handleNewChat()}
+          className="moboko-btn-primary w-full px-4 py-2.5 text-sm disabled:opacity-40"
+        >
+          Nouveau chat
+        </button>
+        <div className="mt-4 space-y-2">
+          <p className="px-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+            Historique
+          </p>
+          {conversationHistory.length === 0 ? (
+            <p className="px-1 text-xs text-[var(--muted)]">Aucun message pour l’instant.</p>
+          ) : (
+            <ul className="max-h-[40vh] space-y-1 overflow-y-auto pr-1 lg:max-h-[calc(100vh-14rem)]">
+              {conversationHistory.map((h) => (
+                <li key={h.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 px-3 py-2">
+                  <p className="line-clamp-2 text-xs leading-relaxed text-[var(--foreground)]">{h.preview}</p>
+                  <p className="mt-1 text-[10px] text-[var(--muted)]">{h.at}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="mt-4 space-y-2">
+          {wallet ? <WalletBanner wallet={wallet} flags={flags} /> : null}
+          <Link href="/billing" className="block px-1 text-xs text-[var(--accent)] hover:underline">
+            Gérer crédits / abonnement
+          </Link>
+        </div>
+      </aside>
+
+      <section className="flex min-h-0 flex-col">
+        <div className="border-b border-[var(--border)] px-4 py-4 sm:px-6">
+          <h1 className="font-display text-xl font-semibold tracking-tight text-[var(--foreground)] sm:text-2xl">
+            Assistant Moboko
+          </h1>
+          <p className="mt-1 text-xs leading-relaxed text-[var(--muted)]">
+            Réponses orientées sources. Le texte généré reste bref; les références sermons sont prioritaires.
+          </p>
         </div>
         {error ? (
           <div
-            className="my-3 rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-soft)] px-4 py-2.5 text-center text-xs text-[var(--danger)]"
+            className="mx-4 mt-3 rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-soft)] px-4 py-2.5 text-center text-xs text-[var(--danger)] sm:mx-6"
             role="alert"
           >
             {error}
           </div>
         ) : null}
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <div className="custom-scrollbar flex-1 overflow-y-auto pb-2">
+        <div className="custom-scrollbar flex-1 overflow-y-auto px-3 pb-36 pt-3 sm:px-6">
+          <div className="mx-auto w-full max-w-3xl">
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center px-4 py-20 text-center">
-                <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--border-strong)] bg-[var(--surface)]/80 shadow-inner">
-                  <svg
-                    className="h-8 w-8 text-[var(--accent)]/80"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={1.25}
-                    aria-hidden
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                    />
-                  </svg>
-                </div>
-                <p className="font-display text-lg text-[var(--foreground)]">Votre échange commence ici</p>
+                <p className="font-display text-lg text-[var(--foreground)]">Nouvelle discussion</p>
                 <p className="mt-2 max-w-sm text-sm leading-relaxed text-[var(--muted)]">
-                  {flags.chatVoiceEnabled
-                    ? "Envoyez un message texte, une image ou une note vocale pour démarrer."
-                    : "Envoyez un message texte ou une image pour démarrer."}
+                  Posez votre question. Moboko répondra en priorité avec des sources sermons réelles.
                 </p>
               </div>
             ) : (
@@ -370,16 +414,18 @@ export function ChatExperience({ userId }: Props) {
             )}
           </div>
         </div>
-      </div>
-      <Composer
-        textEnabled={flags.chatTextEnabled}
-        imageEnabled={flags.chatImageEnabled}
-        voiceEnabled={flags.chatVoiceEnabled}
-        busy={busy}
-        onSendText={handleSendText}
-        onSendImage={handleSendImage}
-        onSendAudio={handleSendAudio}
-      />
+        <div className="fixed bottom-0 left-0 right-0 z-40 lg:left-[17rem]">
+          <Composer
+            textEnabled={flags.chatTextEnabled}
+            imageEnabled={flags.chatImageEnabled}
+            voiceEnabled={flags.chatVoiceEnabled}
+            busy={busy}
+            onSendText={handleSendText}
+            onSendImage={handleSendImage}
+            onSendAudio={handleSendAudio}
+          />
+        </div>
+      </section>
     </div>
   );
 }

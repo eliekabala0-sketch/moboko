@@ -3,12 +3,14 @@ import {
   getOpenAIClient,
   historyToOpenAIMessages,
   runChatCompletion,
+  runStructuredJsonCompletion,
   transcribeAudio,
   type DbMessageRow,
 } from "@/lib/ai/moboko-chat";
 import {
   clipForPrompt,
   fetchSermonSearchCandidates,
+  type SermonParagraphCandidate,
 } from "@/lib/sermons/ai-sermon-search-server";
 import { getUserFromApiRequest } from "@/lib/supabase/api-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
@@ -59,6 +61,169 @@ function parseBody(raw: unknown): Body | null {
 
 function pathBelongsToUser(path: string, userId: string) {
   return path.startsWith(`${userId}/`);
+}
+
+type SemanticIntent = {
+  intent: string;
+  concepts: string[];
+  expansions: string[];
+  maybe_meant: string | null;
+};
+
+type AiPick = { i?: number; note?: string };
+
+function parseSemanticIntent(raw: string): SemanticIntent | null {
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!data || typeof data !== "object") return null;
+  const o = data as Record<string, unknown>;
+  const intent = typeof o.intent === "string" ? o.intent.trim().slice(0, 240) : "";
+  const maybe_meant = typeof o.maybe_meant === "string" ? o.maybe_meant.trim().slice(0, 240) : null;
+  const concepts = Array.isArray(o.concepts)
+    ? o.concepts
+        .filter((x): x is string => typeof x === "string")
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .slice(0, 10)
+    : [];
+  const expansions = Array.isArray(o.expansions)
+    ? o.expansions
+        .filter((x): x is string => typeof x === "string")
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .slice(0, 8)
+    : [];
+  return { intent, concepts, expansions, maybe_meant };
+}
+
+function parseAiPicks(raw: string, n: number): { picks: AiPick[]; summary: string | null } | null {
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!data || typeof data !== "object") return null;
+  const o = data as Record<string, unknown>;
+  const summary = typeof o.summary === "string" ? o.summary.trim().slice(0, 320) : null;
+  const arr = o.picks;
+  if (!Array.isArray(arr)) return { picks: [], summary };
+  const picks: AiPick[] = [];
+  const used = new Set<number>();
+  for (const item of arr) {
+    if (typeof item !== "object" || item === null) continue;
+    const p = item as Record<string, unknown>;
+    const i = typeof p.i === "number" && Number.isInteger(p.i) ? p.i : null;
+    if (i === null || i < 1 || i > n || used.has(i)) continue;
+    used.add(i);
+    const note = typeof p.note === "string" ? p.note.trim().slice(0, 180) : undefined;
+    picks.push({ i, note });
+    if (picks.length >= 4) break;
+  }
+  return { picks, summary };
+}
+
+async function extractSemanticIntent(
+  openai: NonNullable<ReturnType<typeof getOpenAIClient>>,
+  query: string,
+): Promise<SemanticIntent | null> {
+  const messages: ChatCompletionMessageParam[] = [
+    {
+      role: "system",
+      content: `Analyse une question française pour recherche de passages de sermons.
+Retourne UNIQUEMENT un JSON :
+{"intent":"...","concepts":["..."],"expansions":["..."],"maybe_meant":"...|null"}
+Ne pas inventer de sources.`,
+    },
+    { role: "user", content: query },
+  ];
+  const raw = await runStructuredJsonCompletion(openai, messages, {
+    maxTokens: 450,
+    temperature: 0.1,
+  });
+  if (!raw) return null;
+  return parseSemanticIntent(raw);
+}
+
+async function fetchSemanticCandidates(
+  admin: NonNullable<ReturnType<typeof createSupabaseServiceClient>>,
+  query: string,
+  semantic: SemanticIntent | null,
+) {
+  const queries = [query, semantic?.intent ?? "", ...(semantic?.expansions ?? []), ...(semantic?.concepts ?? [])]
+    .map((x) => x.trim())
+    .filter((x, i, arr) => x.length >= 3 && arr.indexOf(x) === i)
+    .slice(0, 8);
+  const byKey = new Map<string, SermonParagraphCandidate>();
+  for (const q of queries) {
+    const rows = await fetchSermonSearchCandidates(admin, q);
+    for (const c of rows) {
+      const k = `${c.slug}:${c.paragraph_number}`;
+      if (!byKey.has(k)) byKey.set(k, c);
+      if (byKey.size >= 56) break;
+    }
+    if (byKey.size >= 56) break;
+  }
+  return Array.from(byKey.values()).slice(0, 48);
+}
+
+function buildRankingPrompt(query: string, semantic: SemanticIntent | null, candidates: SermonParagraphCandidate[]) {
+  const lines = candidates.map((c, idx) => {
+    const y = c.year != null ? String(c.year) : "";
+    return `${idx + 1}\t${c.slug}\t${c.title}\t${y}\t${c.paragraph_number}\t${clipForPrompt(c.paragraph_text, 480)}`;
+  });
+  return [
+    `Question: ${query}`,
+    `Intent: ${semantic?.intent || "(non déterminé)"}`,
+    `Concepts: ${(semantic?.concepts ?? []).join(", ") || "(aucun)"}`,
+    "",
+    "Extraits candidats (n° | slug | titre | année | paragraphe | extrait):",
+    lines.join("\n"),
+  ].join("\n");
+}
+
+function composeSourcesFirstReply(
+  query: string,
+  semantic: SemanticIntent | null,
+  ranked: { c: SermonParagraphCandidate; note: string | null }[],
+  summary: string | null,
+) {
+  if (ranked.length === 0) {
+    const hints = (semantic?.concepts ?? []).slice(0, 4).join(", ");
+    return [
+      "Je n’ai pas trouvé de passage suffisamment pertinent dans les sermons pour cette formulation.",
+      hints ? `Pistes proches: ${hints}` : null,
+      "Reformulez en précisant le thème, un titre de sermon, ou une idée centrale.",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  const lines: string[] = [];
+  lines.push(summary || "Voici les passages les plus pertinents trouvés dans les sermons.");
+  lines.push("");
+  lines.push(`Question: ${query}`);
+  lines.push("");
+  for (const [idx, item] of ranked.entries()) {
+    const c = item.c;
+    lines.push(`### Source ${idx + 1}`);
+    lines.push(`- Titre: ${c.title}`);
+    lines.push(`- Slug: ${c.slug}`);
+    lines.push(`- Lieu: ${c.location || "non indiqué"}`);
+    lines.push(`- Date: ${c.preached_on || (c.year != null ? String(c.year) : "non indiquée")}`);
+    lines.push(`- Paragraphe: §${c.paragraph_number}`);
+    if (item.note) lines.push(`- Pertinence: ${item.note}`);
+    lines.push("");
+    lines.push("Texte:");
+    lines.push(c.paragraph_text);
+    lines.push("");
+  }
+  lines.push("Orientation: lisez ces passages et tirez votre conclusion à la lumière de la Parole.");
+  return lines.join("\n");
 }
 
 async function maybeInjectSermonContext(
@@ -295,13 +460,60 @@ export async function POST(request: Request) {
       completionMessages.push({ role: "user", content: transcription });
     }
 
-    const sermonContextCount = await maybeInjectSermonContext(
-      completionMessages,
-      userContent,
-      admin,
-    );
+    let assistantText = "";
+    let sermonContextCount = 0;
 
-    const assistantText = await runChatCompletion(openai, completionMessages);
+    if (body.mode === "text" && userContent) {
+      try {
+        let semantic: SemanticIntent | null = null;
+        try {
+          semantic = await extractSemanticIntent(openai, userContent);
+        } catch {
+          semantic = null;
+        }
+
+        const candidates = await fetchSemanticCandidates(admin, userContent, semantic);
+        sermonContextCount = candidates.length;
+
+        if (candidates.length > 0) {
+          const rankRaw = await runStructuredJsonCompletion(
+            openai,
+            [
+              {
+                role: "system",
+                content:
+                  'Classe les extraits de sermons les plus pertinents. Réponse JSON stricte: {"summary":"...","picks":[{"i":1,"note":"..."}]}',
+              },
+              { role: "user", content: buildRankingPrompt(userContent, semantic, candidates) },
+            ],
+            { maxTokens: 900, temperature: 0.1 },
+          );
+          const parsed = rankRaw ? parseAiPicks(rankRaw, candidates.length) : null;
+          const ranked = (parsed?.picks ?? [])
+            .filter((p): p is { i: number; note?: string } => typeof p.i === "number")
+            .map((p) => ({ c: candidates[p.i - 1], note: p.note?.trim() || null }))
+            .filter((x): x is { c: SermonParagraphCandidate; note: string | null } => Boolean(x.c));
+          assistantText = composeSourcesFirstReply(userContent, semantic, ranked, parsed?.summary ?? null);
+        } else {
+          assistantText = composeSourcesFirstReply(userContent, semantic, [], null);
+        }
+      } catch {
+        sermonContextCount = await maybeInjectSermonContext(
+          completionMessages,
+          userContent,
+          admin,
+        );
+        assistantText = await runChatCompletion(openai, completionMessages);
+      }
+    } else {
+      sermonContextCount = await maybeInjectSermonContext(
+        completionMessages,
+        userContent,
+        admin,
+      );
+      assistantText = await runChatCompletion(openai, completionMessages);
+    }
+
     if (!assistantText) {
       return NextResponse.json({ error: "reponse_ia_vide" }, { status: 502 });
     }

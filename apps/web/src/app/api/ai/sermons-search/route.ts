@@ -18,6 +18,12 @@ export const runtime = "nodejs";
 export const maxDuration = 90;
 
 type Body = { query?: string };
+type SemanticIntent = {
+  intent: string;
+  concepts: string[];
+  expansions: string[];
+  maybe_meant: string | null;
+};
 
 function parseBody(raw: unknown): string | null {
   if (!raw || typeof raw !== "object") return null;
@@ -26,12 +32,6 @@ function parseBody(raw: unknown): string | null {
   const t = q.trim();
   if (t.length < 8 || t.length > 2000) return null;
   return t;
-}
-
-function excerptDisplay(text: string, max = 340) {
-  const one = text.replace(/\s+/g, " ").trim();
-  if (one.length <= max) return one;
-  return `${one.slice(0, max - 1)}…`;
 }
 
 type AiPick = { i?: number; note?: string };
@@ -80,6 +80,84 @@ function buildRankingPrompt(query: string, candidates: SermonParagraphCandidate[
     "Extraits numérotés (TSV : n° | slug | titre | année | n° paragraphe | extrait). Tu ne peux citer que ces numéros.",
     lines.join("\n"),
   ].join("\n");
+}
+
+function parseSemanticIntent(raw: string): SemanticIntent | null {
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!data || typeof data !== "object") return null;
+  const o = data as Record<string, unknown>;
+  const intent = typeof o.intent === "string" ? o.intent.trim().slice(0, 240) : "";
+  const maybe_meant = typeof o.maybe_meant === "string" ? o.maybe_meant.trim().slice(0, 240) : null;
+  const concepts = Array.isArray(o.concepts)
+    ? o.concepts
+        .filter((x): x is string => typeof x === "string")
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .slice(0, 10)
+    : [];
+  const expansions = Array.isArray(o.expansions)
+    ? o.expansions
+        .filter((x): x is string => typeof x === "string")
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .slice(0, 8)
+    : [];
+  return { intent, concepts, expansions, maybe_meant };
+}
+
+async function extractSemanticIntent(
+  openai: NonNullable<ReturnType<typeof getOpenAIClient>>,
+  query: string,
+): Promise<SemanticIntent | null> {
+  const messages: ChatCompletionMessageParam[] = [
+    {
+      role: "system",
+      content: `Analyse une requête utilisateur en français pour rechercher des passages de sermons.
+Retourne UNIQUEMENT un JSON:
+{"intent":"...","concepts":["..."],"expansions":["..."],"maybe_meant":"...|null"}
+Règles:
+- intent: reformulation courte de ce que la personne veut vraiment.
+- concepts: notions sémantiques proches (pas de bruit lexical), max 10.
+- expansions: reformulations utiles pour interroger une base textuelle, max 8.
+- maybe_meant: précision utile si ambiguïté, sinon null.
+- Ne pas inventer de citation ni de référence.`,
+    },
+    { role: "user", content: query },
+  ];
+  const raw = await runStructuredJsonCompletion(openai, messages, {
+    maxTokens: 450,
+    temperature: 0.1,
+  });
+  if (!raw) return null;
+  return parseSemanticIntent(raw);
+}
+
+async function fetchSemanticCandidates(
+  admin: NonNullable<ReturnType<typeof createSupabaseServiceClient>>,
+  query: string,
+  sem: SemanticIntent | null,
+) {
+  const queries = [query, sem?.intent ?? "", ...(sem?.expansions ?? []), ...(sem?.concepts ?? [])]
+    .map((x) => x.trim())
+    .filter((x, i, arr) => x.length >= 3 && arr.indexOf(x) === i)
+    .slice(0, 8);
+
+  const byKey = new Map<string, SermonParagraphCandidate>();
+  for (const q of queries) {
+    const rows = await fetchSermonSearchCandidates(admin, q);
+    for (const c of rows) {
+      const k = `${c.slug}:${c.paragraph_number}`;
+      if (!byKey.has(k)) byKey.set(k, c);
+      if (byKey.size >= 72) break;
+    }
+    if (byKey.size >= 72) break;
+  }
+  return Array.from(byKey.values()).slice(0, 64);
 }
 
 export async function POST(request: Request) {
@@ -155,7 +233,14 @@ export async function POST(request: Request) {
   const balance = profile.credit_balance ?? 0;
   const billingExempt = Boolean(profile.is_free_access || profile.is_premium);
 
-  const candidates = await fetchSermonSearchCandidates(admin, query);
+  let semantic: SemanticIntent | null = null;
+  try {
+    semantic = await extractSemanticIntent(openai, query);
+  } catch {
+    semantic = null;
+  }
+
+  const candidates = await fetchSemanticCandidates(admin, query, semantic);
 
   if (candidates.length === 0) {
     return NextResponse.json({
@@ -166,7 +251,8 @@ export async function POST(request: Request) {
       credit_cost: creditCost,
       balance_after: balance,
       billing_skipped: billingExempt,
-      hint: "Aucun passage pertinent trouvé dans l’index (essayez des mots du texte ou le titre du sermon).",
+      hint:
+        "Aucun passage pertinent trouvé pour cette formulation. Essayez une reformulation plus précise (thème, titre de sermon, idée clé).",
     });
   }
 
@@ -194,7 +280,15 @@ Réponds en JSON strict avec le schéma :
 {"summary":"une phrase courte sur ce que tu as retenu (ou chaîne vide)","picks":[{"i":1,"note":"pourquoi ce passage répond (court)"}]}
 Maximum 8 entrées dans picks, les plus pertinentes en premier. Si rien ne convient, picks [].`,
     },
-    { role: "user", content: userPrompt },
+    {
+      role: "user",
+      content:
+        `${userPrompt}\n\n` +
+        `Contexte sémantique déduit:\n` +
+        `- intent: ${semantic?.intent || "(non déterminé)"}\n` +
+        `- concepts: ${(semantic?.concepts ?? []).join(", ") || "(aucun)"}\n` +
+        `- maybe_meant: ${semantic?.maybe_meant || "(aucun)"}\n`,
+    },
   ];
 
   let rawJson: string;
@@ -237,8 +331,10 @@ Maximum 8 entrées dans picks, les plus pertinentes en premier. Si rien ne convi
       slug: c.slug,
       title: c.title,
       year: c.year,
+      preached_on: c.preached_on,
+      location: c.location,
       paragraph_number: c.paragraph_number,
-      excerpt: excerptDisplay(c.paragraph_text),
+      paragraph_text: c.paragraph_text,
       read_href: `/sermons/${slugEnc}#p-${c.paragraph_number}`,
       project_href: `/sermons/${slugEnc}/project?p=${c.paragraph_number}`,
       note: pick.note?.trim() || null,
@@ -285,6 +381,7 @@ Maximum 8 entrées dans picks, les plus pertinentes en premier. Si rien ne convi
     ok: true,
     results,
     summary,
+    semantic,
     credits_charged: creditsDebited,
     credit_cost: creditCost,
     balance_after: balanceAfter,

@@ -3,6 +3,7 @@
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { ChatAttachmentRecord } from "@moboko/shared";
 import { useEffect, useState } from "react";
+import { SermonSourceBlock } from "./SermonSourceBlock";
 
 export type UiMessage = {
   id: string;
@@ -47,6 +48,8 @@ function Bubble({
   mediaSrc: string | null;
 }) {
   const mine = msg.role === "user";
+  const parsed = !mine && msg.kind === "text" ? parseAssistantSermonSources(msg.content) : null;
+
   return (
     <div className={`flex w-full ${mine ? "justify-end" : "justify-start"}`}>
       <div
@@ -73,7 +76,35 @@ function Bubble({
               className="mb-2 h-9 w-full max-w-xs opacity-95"
             />
           ) : null}
-          {msg.content ? (
+          {parsed ? (
+            <div className="space-y-3">
+              <p className="whitespace-pre-wrap text-[15px] leading-[1.65] tracking-[0.01em]">
+                {parsed.intro}
+              </p>
+              <div className="space-y-3">
+                {parsed.sources.map((s, i) => (
+                  <SermonSourceBlock
+                    key={`${s.slug}-${s.paragraphNumber}-${i}`}
+                    title={s.title}
+                    slug={s.slug}
+                    location={s.location}
+                    date={s.date}
+                    paragraphNumber={s.paragraphNumber}
+                    paragraphText={s.paragraphText}
+                    note={s.note}
+                  />
+                ))}
+              </div>
+              {parsed.more ? (
+                <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 px-4 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
+                    Pour aller plus loin
+                  </p>
+                  <p className="mt-1 text-sm leading-relaxed text-[var(--muted)]">{parsed.more}</p>
+                </div>
+              ) : null}
+            </div>
+          ) : msg.content ? (
             <p className="whitespace-pre-wrap text-[15px] leading-[1.65] tracking-[0.01em]">{msg.content}</p>
           ) : null}
           {!msg.content && msg.kind !== "text" && !mediaSrc ? (
@@ -83,6 +114,112 @@ function Bubble({
       </div>
     </div>
   );
+}
+
+type ParsedSource = {
+  title: string;
+  slug: string;
+  location: string | null;
+  date: string | null;
+  paragraphNumber: number;
+  paragraphText: string;
+  note: string | null;
+};
+
+function parseAssistantSermonSources(content: string | null): {
+  intro: string;
+  sources: ParsedSource[];
+  more: string | null;
+} | null {
+  if (!content) return null;
+  const lines = content.split("\n");
+  const start = lines.findIndex((l) => l.trim().toLowerCase().startsWith("### source"));
+  if (start < 0) return null;
+
+  const introLines = lines
+    .slice(0, start)
+    .map((l) => l.trim())
+    .filter((l) => l && !l.toLowerCase().startsWith("question:"));
+  const intro = introLines.join(" ").trim() || "Sources trouvées :";
+
+  const sources: ParsedSource[] = [];
+  let i = start;
+  let more: string | null = null;
+
+  while (i < lines.length) {
+    const h = lines[i]?.trim() ?? "";
+    if (!h.toLowerCase().startsWith("### source")) {
+      i += 1;
+      continue;
+    }
+    i += 1;
+    let title = "";
+    let slug = "";
+    let location: string | null = null;
+    let date: string | null = null;
+    let paragraphNumber = 0;
+    let note: string | null = null;
+
+    while (i < lines.length) {
+      const l = lines[i]?.trim() ?? "";
+      if (!l) {
+        i += 1;
+        continue;
+      }
+      if (l.toLowerCase().startsWith("texte:")) {
+        i += 1;
+        break;
+      }
+      if (l.startsWith("- Titre:")) title = l.replace("- Titre:", "").trim();
+      else if (l.startsWith("- Slug:")) slug = l.replace("- Slug:", "").trim();
+      else if (l.startsWith("- Lieu:")) location = l.replace("- Lieu:", "").trim() || null;
+      else if (l.startsWith("- Date:")) date = l.replace("- Date:", "").trim() || null;
+      else if (l.startsWith("- Paragraphe:")) {
+        const m = l.match(/§\s*(\d+)/);
+        paragraphNumber = m ? Number(m[1]) : 0;
+      } else if (l.startsWith("- Pertinence:")) note = l.replace("- Pertinence:", "").trim() || null;
+      i += 1;
+    }
+
+    const paragraphLines: string[] = [];
+    while (i < lines.length) {
+      const l = lines[i] ?? "";
+      const t = l.trim().toLowerCase();
+      if (t.startsWith("### source")) break;
+      if (t.startsWith("orientation:")) {
+        more = l.trim().replace(/^orientation:\s*/i, "") || null;
+        i += 1;
+        break;
+      }
+      paragraphLines.push(l);
+      i += 1;
+    }
+    const paragraphText = paragraphLines.join("\n").trim();
+    const resolvedSlug = slug || slugifyFromTitle(title);
+    if (title && paragraphNumber > 0 && paragraphText && resolvedSlug) {
+      sources.push({
+        title,
+        slug: resolvedSlug,
+        location,
+        date,
+        paragraphNumber,
+        paragraphText,
+        note,
+      });
+    }
+  }
+
+  if (sources.length === 0) return null;
+  return { intro, sources, more };
+}
+
+function slugifyFromTitle(title: string): string {
+  return title
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 export function MessageList({ messages }: { messages: UiMessage[] }) {

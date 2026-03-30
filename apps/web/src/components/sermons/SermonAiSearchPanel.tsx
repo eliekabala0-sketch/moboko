@@ -7,8 +7,10 @@ type SearchResult = {
   slug: string;
   title: string;
   year: number | null;
+  preached_on?: string | null;
+  location?: string | null;
   paragraph_number: number;
-  excerpt: string;
+  paragraph_text: string;
   read_href: string;
   project_href: string;
   note: string | null;
@@ -281,7 +283,14 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
                           {r.note}
                         </p>
                       ) : null}
-                      <p className="mt-3 text-sm leading-relaxed text-[var(--muted)]">{r.excerpt}</p>
+                      <p className="mt-2 text-xs text-[var(--muted)]">
+                        {[r.location, r.preached_on || (r.year != null ? String(r.year) : null)]
+                          .filter(Boolean)
+                          .join(" · ") || "Date/lieu non indiqués"}
+                      </p>
+                      <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-[var(--muted)]">
+                        {r.paragraph_text}
+                      </p>
                       <div className="mt-4 flex flex-wrap gap-4 text-sm font-medium">
                         <Link href={r.read_href} className="text-[var(--accent)] hover:underline">
                           Lire (ancre)

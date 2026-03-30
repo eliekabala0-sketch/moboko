@@ -5,6 +5,8 @@ export type SermonParagraphCandidate = {
   slug: string;
   title: string;
   year: number | null;
+  preached_on: string | null;
+  location: string | null;
   paragraph_number: number;
   paragraph_text: string;
 };
@@ -56,6 +58,8 @@ function normalizeSermonEmbed(emb: unknown): {
   slug: string;
   title: string;
   year: number | null;
+  preached_on: string | null;
+  location: string | null;
   is_published: boolean;
 } | null {
   const row = Array.isArray(emb) ? emb[0] : emb;
@@ -67,6 +71,8 @@ function normalizeSermonEmbed(emb: unknown): {
     slug: o.slug,
     title: o.title,
     year: typeof o.year === "number" ? o.year : null,
+    preached_on: typeof o.preached_on === "string" ? o.preached_on : null,
+    location: typeof o.location === "string" ? o.location : null,
     is_published: o.is_published !== false,
   };
 }
@@ -85,6 +91,8 @@ function rowToCandidate(row: {
     slug: meta.slug,
     title: meta.title,
     year: meta.year,
+    preached_on: meta.preached_on,
+    location: meta.location,
     paragraph_number: n,
     paragraph_text: t,
   };
@@ -138,7 +146,9 @@ export async function fetchSermonSearchCandidates(
   const runFts = async (q: string, limit: number) => {
     const { data } = await admin
       .from("sermon_paragraphs")
-      .select("paragraph_number, paragraph_text, sermons ( slug, title, year, is_published )")
+      .select(
+        "paragraph_number, paragraph_text, sermons ( slug, title, year, preached_on, location, is_published )",
+      )
       .textSearch("search_tsv", q, { type: "websearch", config: "french" })
       .limit(limit);
     pushCandidates(seen, acc, data as unknown[]);
@@ -176,7 +186,9 @@ export async function fetchSermonSearchCandidates(
         const countBeforeScoped = acc.length;
         const { data: scoped } = await admin
           .from("sermon_paragraphs")
-          .select("paragraph_number, paragraph_text, sermons ( slug, title, year, is_published )")
+          .select(
+            "paragraph_number, paragraph_text, sermons ( slug, title, year, preached_on, location, is_published )",
+          )
           .in("sermon_id", ids)
           .textSearch("search_tsv", query, { type: "websearch", config: "french" })
           .limit(36);
@@ -185,7 +197,9 @@ export async function fetchSermonSearchCandidates(
         if (acc.length === countBeforeScoped) {
           const { data: fallback } = await admin
             .from("sermon_paragraphs")
-            .select("paragraph_number, paragraph_text, sermons ( slug, title, year, is_published )")
+            .select(
+              "paragraph_number, paragraph_text, sermons ( slug, title, year, preached_on, location, is_published )",
+            )
             .in("sermon_id", ids.slice(0, 4))
             .order("sermon_id", { ascending: true })
             .order("paragraph_number", { ascending: true })
