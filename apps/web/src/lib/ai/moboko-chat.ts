@@ -29,6 +29,7 @@ export type DbMessageRow = {
   role: string;
   kind: string;
   content: string | null;
+  metadata?: Record<string, unknown> | null;
 };
 
 export function historyToOpenAIMessages(

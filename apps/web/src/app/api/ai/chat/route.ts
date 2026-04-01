@@ -112,6 +112,16 @@ type SemanticIntent = {
   year_from: number | null;
   year_to: number | null;
   maybe_meant: string | null;
+  /** Phrases de rappel ciblées par le sens (pas des mots isolés pièges). */
+  retrieval_phrases: string[];
+  /** Termes à ne pas utiliser seuls comme requête (évite faux positifs lexicaux). */
+  avoid_lexical_bait: string[];
+  /** Consigne interne pour le classement : type de passage attendu / à exclure. */
+  passage_brief: string;
+  /** Si non null, limiter les candidats à ce sermon (slug DB). */
+  restrict_sermon_slug: string | null;
+  /** Suite d’une recherche : lier au tour précédent quand c’est explicite. */
+  follow_up_continuity: boolean;
 };
 
 type AiPick = { i?: number };
@@ -202,6 +212,27 @@ function parseSemanticIntent(raw: string): SemanticIntent | null {
         .filter(Boolean)
         .slice(0, 6)
     : [];
+  const retrieval_phrases = Array.isArray(o.retrieval_phrases)
+    ? o.retrieval_phrases
+        .filter((x): x is string => typeof x === "string")
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .slice(0, 8)
+    : [];
+  const avoid_lexical_bait = Array.isArray(o.avoid_lexical_bait)
+    ? o.avoid_lexical_bait
+        .filter((x): x is string => typeof x === "string")
+        .map((x) => x.trim().toLowerCase())
+        .filter(Boolean)
+        .slice(0, 10)
+    : [];
+  const passage_brief =
+    typeof o.passage_brief === "string" ? o.passage_brief.trim().slice(0, 420) : "";
+  const restrict_sermon_slug =
+    typeof o.restrict_sermon_slug === "string" && o.restrict_sermon_slug.trim()
+      ? o.restrict_sermon_slug.trim().slice(0, 220)
+      : null;
+  const follow_up_continuity = o.follow_up_continuity === true;
   return {
     search_mode,
     user_need,
@@ -215,10 +246,17 @@ function parseSemanticIntent(raw: string): SemanticIntent | null {
     year_from,
     year_to,
     maybe_meant,
+    retrieval_phrases,
+    avoid_lexical_bait,
+    passage_brief,
+    restrict_sermon_slug,
+    follow_up_continuity,
   };
 }
 
-function parseAiPicks(raw: string, n: number): { picks: AiPick[] } | null {
+const CHAT_RANK_MAX_PICKS = 10;
+
+function parseAiPicks(raw: string, n: number, maxPicks = CHAT_RANK_MAX_PICKS): { picks: AiPick[] } | null {
   let data: unknown;
   try {
     data = JSON.parse(raw);
@@ -238,9 +276,97 @@ function parseAiPicks(raw: string, n: number): { picks: AiPick[] } | null {
     if (i === null || i < 1 || i > n || used.has(i)) continue;
     used.add(i);
     picks.push({ i });
-    if (picks.length >= 8) break;
+    if (picks.length >= maxPicks) break;
   }
   return { picks };
+}
+
+function normQueryTokens(s: string): string[] {
+  const t = s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return t.match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+/** Requête à un seul mot (ou seulement des « appâts » lexicaux) : ne pas l’envoyer seule à la base. */
+function isShallowBaitOnly(q: string, bait: Set<string>): boolean {
+  const words = normQueryTokens(q);
+  if (words.length === 0) return true;
+  if (words.length > 3) return false;
+  return words.every((w) => bait.has(w));
+}
+
+function dedupeQueries(parts: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const p of parts) {
+    const t = p.trim();
+    if (t.length < 3) continue;
+    const k = t.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+  }
+  return out;
+}
+
+type TurnCtx = { block: string; primarySlug: string | null };
+
+function buildConcordanceTurnContext(rows: DbMessageRow[]): TurnCtx {
+  const textUsers = rows.filter((r) => r.role === "user" && r.kind === "text" && (r.content ?? "").trim());
+  const recentUsers = textUsers.slice(-2);
+  let lastResults: unknown[] | null = null;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i];
+    if (r.role !== "assistant") continue;
+    const meta =
+      r.metadata && typeof r.metadata === "object" && !Array.isArray(r.metadata)
+        ? (r.metadata as Record<string, unknown>)
+        : null;
+    if (meta?.moboko_kind === "sermon_concordance" && Array.isArray(meta.results)) {
+      lastResults = meta.results as unknown[];
+      break;
+    }
+  }
+  const lines: string[] = [];
+  if (recentUsers.length) {
+    lines.push("Contexte immédiat — tours utilisateur récents :");
+    for (const u of recentUsers) {
+      lines.push(`- ${(u.content ?? "").trim().slice(0, 520)}`);
+    }
+  }
+  let primarySlug: string | null = null;
+  if (lastResults?.length) {
+    const slugs = new Set<string>();
+    const titles = new Set<string>();
+    for (const item of lastResults) {
+      if (!item || typeof item !== "object") continue;
+      const o = item as Record<string, unknown>;
+      if (typeof o.slug === "string" && o.slug.trim()) slugs.add(o.slug.trim());
+      if (typeof o.title === "string" && o.title.trim()) titles.add(o.title.trim());
+    }
+    if (slugs.size === 1) primarySlug = [...slugs][0];
+    lines.push("Contexte immédiat — dernière concordance affichée (même fil de recherche) :");
+    lines.push(`- slugs : ${[...slugs].slice(0, 6).join(", ") || "(inconnu)"}`);
+    lines.push(`- titres : ${[...titles].slice(0, 4).join(" · ") || "(inconnu)"}`);
+    if (slugs.size > 1) {
+      lines.push(
+        "- Plusieurs sermons : en cas de suite vague (« encore », « plus loin »), ne fixe restrict_sermon_slug que si l’utilisateur précise lequel ou qu’un seul slug est visé.",
+      );
+    }
+  }
+  if (lines.length === 0) return { block: "", primarySlug: null };
+  return { block: lines.join("\n"), primarySlug };
+}
+
+function resolveSemanticWithFollowUp(semantic: SemanticIntent, primarySlug: string | null): SemanticIntent {
+  if (semantic.restrict_sermon_slug) return semantic;
+  if (!semantic.follow_up_continuity || !primarySlug) return semantic;
+  return { ...semantic, restrict_sermon_slug: primarySlug };
 }
 
 async function enrichRankedWithNeighbors(
@@ -286,28 +412,43 @@ async function enrichRankedWithNeighbors(
 async function extractSemanticIntent(
   openai: NonNullable<ReturnType<typeof getOpenAIClient>>,
   query: string,
+  turnContextBlock: string | null = null,
 ): Promise<SemanticIntent | null> {
+  const ctx =
+    turnContextBlock && turnContextBlock.trim()
+      ? `\n\n## Contexte poursuite (ne pas ignorer si la question s’y réfère)\n${turnContextBlock.trim()}`
+      : "";
   const messages: ChatCompletionMessageParam[] = [
     {
       role: "system",
       content: `${MOBOKO_SOURCE_ONLY_LOCK}
 
-Tu analyses une question française UNIQUEMENT pour produire des paramètres de recherche (aucune réponse à l’utilisateur, aucun sermon inventé).
+Tu analyses une demande en français UNIQUEMENT pour paramétrer une recherche documentaire dans des sermons (aucune réponse visible à l’utilisateur, aucun sermon inventé).
+
 Retourne UNIQUEMENT un JSON :
-{"search_mode":"...","user_need":"...","intent":"...","topic":"...","concepts":["..."],"expansions":["..."],"content_types":["..."],"quoted_phrase":"...|null","sermon_hint":"...|null","year_from":1963|null,"year_to":1965|null,"maybe_meant":"...|null"}
+{"search_mode":"...","user_need":"...","intent":"...","topic":"...","concepts":["..."],"expansions":["..."],"content_types":["..."],"quoted_phrase":"...|null","sermon_hint":"...|null","year_from":1963|null,"year_to":1965|null,"maybe_meant":"...|null","retrieval_phrases":["..."],"avoid_lexical_bait":["..."],"passage_brief":"...","restrict_sermon_slug":"...|null","follow_up_continuity":false}
+
 search_mode parmi: exact_quote_search, theme_search, situation_search, story_search, prayer_search, doctrinal_search, time_bounded_search, preaching_prep_search, comfort_or_exhortation_search, sermon_title_then_topic_search.
 user_need parmi: simple_answer, orientation, exhortation, comfort, preaching_prep, citation_list, prayer_list, story_list.
-Règles:
-- tolérance forte aux fautes d’orthographe, fautes de frappe, accents manquants, phrases incomplètes et mots-clés isolés.
-- relier les formulations approximatives à l’idée probable (ex: "prophete" => "prophète", "dime" => "dîme", "q dit le prophete sur boire" => alcool/vin/sobriété/tempérance).
-- Ne pas inventer de sources.`,
+
+Règles impératives :
+- Comprends le SENS et le TYPE DE PASSAGE demandé (récit narratif, prière réelle, consolation, développement d’un texte biblique précis, thème dans un périmètre…), pas une collection de mots pris dans la phrase.
+- Ne déduis PAS une stratégie de recherche exclusivement des mots surface de la question (ex. « histoires » peut désigner des récits/anecdotes du prophète, pas obligatoirement le mot « histoire » dans le texte).
+- retrieval_phrases : 3 à 8 phrases ou expressions SUBSTANTIVES pour interroger la base sur le fond (scènes, actions, personnages, références, formulations proches du contenu attendu). Zéro mot vague seul si la demande porte sur un type de passage.
+- avoid_lexical_bait : mots ou courts trigrammes qui viennent de l’utilisateur mais qui mèneraient à des faux positifs s’ils servent seuls (ex. pour « il raconte des histoires » : inclure "histoire", "histoires" sauf si citation exacte recherchée).
+- passage_brief : une phrase interne qui décrit ce qui compte pour RETENIR ou ÉCARTER un paragraphe au classement (ex. « garder seulement un vrai récit raconté au passé, dialogue, anecdote ; écarter un simple emploi du mot histoire »).
+- follow_up_continuity : true si la phrase supposerait la réponse précédente (« toujours dans ce sermon », « encore », « plus loin », « dans ce message », « précise », etc.).
+- restrict_sermon_slug : le slug exact du sermon si la demande ou le contexte le fixe (y compris slug listé dans la poursuite) ; sinon null.
+- content_types : indique le(s) type(s) de passage visés (ex. narrative_scene, prayer_address, comfort, scripture_exposition, jewish_theme…).
+- tolérance orthographe / fautes / formulations brutes comme avant.
+- Ne pas inventer de sources.${ctx}`,
     },
     { role: "user", content: query },
   ];
   const raw = await runStructuredJsonCompletion(openai, messages, {
-    maxTokens: 280,
-    temperature: 0.1,
-    timeoutMs: 22_000,
+    maxTokens: 520,
+    temperature: 0.08,
+    timeoutMs: 26_000,
   });
   if (!raw) return null;
   return parseSemanticIntent(raw);
@@ -318,37 +459,32 @@ async function fetchSemanticCandidates(
   query: string,
   semantic: SemanticIntent | null,
 ) {
-  const typeExpansions =
-    semantic?.search_mode === "prayer_search"
-      ? ["prière", "prions", "je prie", "prayer line", "ligne de prière"]
-      : semantic?.search_mode === "story_search"
-        ? ["histoire", "récit", "témoignage", "il raconta", "il dit"]
-        : semantic?.search_mode === "comfort_or_exhortation_search"
-          ? ["consolation", "réconfort", "fortifie", "encouragement", "espérance"]
-          : [];
+  const bait = new Set(semantic?.avoid_lexical_bait ?? []);
+  const restrict = semantic?.restrict_sermon_slug?.trim() ?? null;
   const quoted = semantic?.quoted_phrase ? [semantic.quoted_phrase] : [];
   const titleThenTopic =
     semantic?.search_mode === "sermon_title_then_topic_search" && semantic?.sermon_hint
       ? [`${semantic.sermon_hint} ${semantic.topic || query}`]
       : [];
-  const queries = [
-    query,
+
+  const candidatesRaw = dedupeQueries([
+    ...(semantic?.retrieval_phrases ?? []),
     semantic?.intent ?? "",
     semantic?.topic ?? "",
     ...quoted,
     ...titleThenTopic,
     ...(semantic?.expansions ?? []),
     ...(semantic?.concepts ?? []),
-    ...typeExpansions,
-  ]
-    .map((x) => x.trim())
-    .filter((x, i, arr) => x.length >= 3 && arr.indexOf(x) === i)
-    .slice(0, 24);
+    query,
+  ]).filter((q) => !isShallowBaitOnly(q, bait));
+
+  const queries = candidatesRaw.slice(0, 26);
   const MAX_CANDIDATES = 900;
   const byKey = new Map<string, SermonParagraphCandidate>();
   const collect = async (q: string) => {
     const rows = await fetchSermonSearchCandidates(admin, q);
     for (const c of rows) {
+      if (restrict && c.slug !== restrict) continue;
       const k = `${c.slug}:${c.paragraph_number}`;
       if (!byKey.has(k)) byKey.set(k, c);
       if (byKey.size >= MAX_CANDIDATES) break;
@@ -365,43 +501,35 @@ async function fetchSemanticCandidates(
     }
   }
   if (byKey.size < 700) {
-    const broad = [
-      semantic?.topic ?? "",
+    const broad = dedupeQueries([
       semantic?.intent ?? "",
+      semantic?.topic ?? "",
       ...(semantic?.concepts ?? []).slice(0, 5),
-    ]
-      .filter(Boolean)
+    ])
+      .filter((x) => x.length >= 4 && !isShallowBaitOnly(x, bait))
       .join(" ");
-    if (broad.trim().length >= 3) await collect(broad);
+    if (broad.trim().length >= 4 && !isShallowBaitOnly(broad, bait)) await collect(broad);
     for (const q of queries.slice(16)) {
       await collect(q);
       if (byKey.size >= MAX_CANDIDATES) break;
     }
   }
   let out = Array.from(byKey.values());
+  if (restrict) {
+    out = out.filter((c) => c.slug === restrict);
+  }
   if (semantic?.year_from != null || semantic?.year_to != null) {
     const minY = semantic.year_from ?? 1900;
     const maxY = semantic.year_to ?? 2100;
     out = out.filter((c) => c.year == null || (c.year >= minY && c.year <= maxY));
   }
-  const hasType = (txt: string, needles: string[]) =>
-    needles.some((n) => txt.includes(n));
   const score = (c: SermonParagraphCandidate) => {
     const t = c.paragraph_text.toLowerCase();
     let s = 0;
     if (semantic?.search_mode === "exact_quote_search" && semantic.quoted_phrase) {
       if (t.includes(semantic.quoted_phrase.toLowerCase())) s += 12;
     }
-    if (semantic?.search_mode === "prayer_search" || semantic?.content_types.includes("prayer")) {
-      if (hasType(t, ["prions", "prière", "je prie", "amen"])) s += 6;
-    }
-    if (semantic?.search_mode === "story_search" || semantic?.content_types.includes("story")) {
-      if (hasType(t, ["histoire", "récit", "témoign", "il dit", "il raconta"])) s += 5;
-    }
-    if (semantic?.search_mode === "comfort_or_exhortation_search") {
-      if (hasType(t, ["consol", "réconfort", "fortifie", "espérance"])) s += 4;
-    }
-    if (semantic?.topic && t.includes(semantic.topic.toLowerCase())) s += 3;
+    if (semantic?.topic && t.includes(semantic.topic.toLowerCase())) s += 2;
     return s;
   };
   out.sort((a, b) => score(b) - score(a));
@@ -413,16 +541,25 @@ function buildRankingPrompt(query: string, semantic: SemanticIntent | null, cand
     const y = c.year != null ? String(c.year) : "";
     return `${idx + 1}\t${c.slug}\t${c.title}\t${y}\t${c.paragraph_number}\t${clipForPrompt(c.paragraph_text, 320)}`;
   });
+  const pb = semantic?.passage_brief?.trim();
+  const types = (semantic?.content_types ?? []).join(", ");
+  const scope =
+    semantic?.restrict_sermon_slug ? `Périmètre sermon (slug): ${semantic.restrict_sermon_slug}` : "Périmètre: bibliothèque";
   return [
     `Question: ${query}`,
     `Intent: ${semantic?.intent || "(non déterminé)"}`,
     `Mode: ${semantic?.search_mode || "theme_search"}`,
     `Besoin: ${semantic?.user_need || "orientation"}`,
+    `Types de passage visés: ${types || "(non précisé)"}`,
+    scope,
+    pb ? `Critères sémantiques (respecter : garder l’adéquation réelle, écarter les matches lexicaux trompeurs) : ${pb}` : "",
     `Concepts: ${(semantic?.concepts ?? []).join(", ") || "(aucun)"}`,
     "",
     "Extraits candidats (n° | slug | titre | année | paragraphe | extrait):",
     lines.join("\n"),
-  ].join("\n");
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
 }
 
 async function maybeInjectSermonContext(
@@ -502,7 +639,7 @@ export async function POST(request: Request) {
 
     let semantic: SemanticIntent | null = null;
     try {
-      semantic = await extractSemanticIntent(openai, query);
+      semantic = await extractSemanticIntent(openai, query, null);
     } catch {
       semantic = null;
     }
@@ -530,14 +667,15 @@ export async function POST(request: Request) {
             role: "system",
             content: `${MOBOKO_SOURCE_ONLY_LOCK}
 
-Tu classes des extraits de sermons par pertinence (liste numérotée fournie).
+Tu classes des extraits de sermons par pertinence sémantique (liste numérotée fournie).
+Privilégie l’adéquation au type de passage et à l’intent ; refuse les extraits qui ne font que partager un mot avec la question sans correspondre au besoin réel.
 Réponds UNIQUEMENT par un JSON valide : {"picks":[{"i":1},...]}
-Maximum 8 indices, du plus pertinent au moins pertinent. Chaque i doit être présent dans la liste.
+Maximum ${CHAT_RANK_MAX_PICKS} indices, du plus pertinent au moins pertinent. Chaque i doit être présent dans la liste.
 Aucune phrase hors JSON, aucun champ supplémentaire. Si rien ne convient : {"picks":[]}.`,
           },
           { role: "user", content: buildRankingPrompt(query, semantic, rerankPool) },
         ],
-        { maxTokens: 360, temperature: 0.08, timeoutMs: 28_000 },
+        { maxTokens: 420, temperature: 0.08, timeoutMs: 28_000 },
       );
     } catch {
       rankRaw = "";
@@ -644,7 +782,7 @@ Aucune phrase hors JSON, aucun champ supplémentaire. Si rien ne convient : {"pi
 
   const { data: historyRows, error: histErr } = await admin
     .from("messages")
-    .select("role, kind, content")
+    .select("role, kind, content, metadata")
     .eq("conversation_id", body.conversationId)
     .order("created_at", { ascending: true })
     .limit(40);
@@ -748,12 +886,18 @@ Aucune phrase hors JSON, aucun champ supplémentaire. Si rien ne convient : {"pi
 
     if (body.mode === "text" && userContent) {
       try {
+        const { block: turnBlock, primarySlug } = buildConcordanceTurnContext(history);
         let semantic: SemanticIntent | null = null;
         try {
-          semantic = await extractSemanticIntent(openai, userContent);
+          semantic = await extractSemanticIntent(
+            openai,
+            userContent,
+            turnBlock.trim() ? turnBlock : null,
+          );
         } catch {
           semantic = null;
         }
+        if (semantic) semantic = resolveSemanticWithFollowUp(semantic, primarySlug);
 
         const candidates = await fetchSemanticCandidates(admin, userContent, semantic);
         sermonContextCount = candidates.length;
@@ -769,14 +913,15 @@ Aucune phrase hors JSON, aucun champ supplémentaire. Si rien ne convient : {"pi
                   role: "system",
                   content: `${MOBOKO_SOURCE_ONLY_LOCK}
 
-Tu classes des extraits de sermons par pertinence (liste numérotée fournie).
+Tu classes des extraits de sermons par pertinence sémantique (liste numérotée fournie).
+Privilégie l’adéquation au type de passage et à l’intent ; refuse les extraits qui ne font que partager un mot avec la question sans correspondre au besoin réel.
 Réponds UNIQUEMENT par un JSON valide : {"picks":[{"i":1},...]}
-Maximum 8 indices, du plus pertinent au moins pertinent. Chaque i doit être présent dans la liste.
+Maximum ${CHAT_RANK_MAX_PICKS} indices, du plus pertinent au moins pertinent. Chaque i doit être présent dans la liste.
 Aucune phrase hors JSON, aucun champ supplémentaire. Si rien ne convient : {"picks":[]}.`,
                 },
                 { role: "user", content: buildRankingPrompt(userContent, semantic, rerankPool) },
               ],
-              { maxTokens: 360, temperature: 0.08, timeoutMs: 28_000 },
+              { maxTokens: 420, temperature: 0.08, timeoutMs: 28_000 },
             );
           } catch (rankErrOn) {
             console.error("[api/ai/chat] classement_ia", rankErrOn);
