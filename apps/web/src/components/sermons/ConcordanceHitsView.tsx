@@ -1,9 +1,9 @@
 "use client";
 
 import type { ConcordanceHit } from "@/lib/sermons/concordance-types";
-import { hitKey } from "@/lib/sermons/concordance-types";
+import { coerceConcordanceHits, hitKey } from "@/lib/sermons/concordance-types";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 function clipPreview(text: string, max = 140): string {
   const t = text.replace(/\s+/g, " ").trim();
@@ -13,17 +13,87 @@ function clipPreview(text: string, max = 140): string {
 
 type Props = {
   hits: ConcordanceHit[];
+  pageSize?: number;
 };
 
-export function ConcordanceHitsView({ hits }: Props) {
+export function ConcordanceHitsView({ hits, pageSize = 20 }: Props) {
   const [open, setOpen] = useState<string | null>(null);
+  const [items, setItems] = useState<ConcordanceHit[]>(hits);
+  const [visible, setVisible] = useState(pageSize);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  useEffect(() => {
+    setItems(hits);
+    setVisible(pageSize);
+    setOpen(null);
+  }, [hits, pageSize]);
 
   const selected = useMemo(
-    () => (open ? hits.find((h) => hitKey(h) === open) ?? null : null),
-    [hits, open],
+    () => (open ? items.find((h) => hitKey(h) === open) ?? null : null),
+    [items, open],
   );
 
-  if (hits.length === 0) return null;
+  const allHits = items.length > 0 ? items : hits;
+  if (allHits.length === 0) return null;
+  const visibleHits = allHits.slice(0, Math.max(pageSize, visible));
+  const lastMeta = allHits[allHits.length - 1];
+  const hasServerMore = Boolean(lastMeta?._has_more && typeof lastMeta?._next_offset === "number");
+  const canLoadMore = hasServerMore || visibleHits.length < allHits.length;
+
+  async function loadMore() {
+    if (loadingMore) return;
+    if (!hasServerMore) {
+      setVisible((v) => v + pageSize);
+      return;
+    }
+    const query = lastMeta?._query?.trim() ?? "";
+    const nextOffset = typeof lastMeta?._next_offset === "number" ? lastMeta._next_offset : null;
+    const serverPageSize =
+      typeof lastMeta?._page_size === "number" && lastMeta._page_size > 0 ? lastMeta._page_size : pageSize;
+    if (!query || nextOffset == null) {
+      setVisible((v) => v + pageSize);
+      return;
+    }
+
+    setLoadingMore(true);
+    try {
+      const endpoint = lastMeta?._source === "chat" ? "/api/ai/chat" : "/api/ai/sermons-search";
+      const payload: Record<string, unknown> =
+        endpoint === "/api/ai/chat"
+          ? {
+              mode: "concordance_page",
+              conversationId: lastMeta?._conversation_id,
+              query,
+              offset: nextOffset,
+              pageSize: serverPageSize,
+            }
+          : {
+              query,
+              offset: nextOffset,
+              pageSize: serverPageSize,
+            };
+      const res = await fetch(endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        setVisible((v) => v + pageSize);
+        return;
+      }
+      const data = (await res.json()) as Record<string, unknown>;
+      const nextHits = coerceConcordanceHits(data.results);
+      if (nextHits.length === 0) {
+        setVisible((v) => v + pageSize);
+        return;
+      }
+      setItems((prev) => [...prev, ...nextHits]);
+      setVisible((v) => v + nextHits.length);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   if (selected) {
     const slugEnc = encodeURIComponent(selected.slug);
@@ -101,10 +171,10 @@ export function ConcordanceHitsView({ hits }: Props) {
   return (
     <div className="space-y-3">
       <p className="text-[13px] font-semibold tracking-tight text-[var(--foreground)]">
-        Résultats trouvés ({hits.length})
+        Résultats trouvés ({lastMeta?._total_count ?? allHits.length})
       </p>
       <ul className="space-y-2">
-      {hits.map((h) => {
+      {visibleHits.map((h) => {
         const k = hitKey(h);
         return (
           <li key={k}>
@@ -125,6 +195,18 @@ export function ConcordanceHitsView({ hits }: Props) {
         );
       })}
       </ul>
+      {canLoadMore ? (
+        <button
+          type="button"
+          onClick={() => void loadMore()}
+          disabled={loadingMore}
+          className="inline-flex items-center rounded-full border border-[var(--border)] px-4 py-2 text-xs font-semibold text-[var(--foreground)] transition hover:border-[var(--border-strong)]"
+        >
+          {loadingMore
+            ? "Chargement…"
+            : `Voir plus (${Math.max((lastMeta?._total_count ?? allHits.length) - visibleHits.length, 0)} restants)`}
+        </button>
+      ) : null}
     </div>
   );
 }

@@ -28,8 +28,11 @@ export const maxDuration = 60;
 
 type Body = {
   conversationId: string;
-  mode: "text" | "image" | "audio";
+  mode: "text" | "image" | "audio" | "concordance_page";
   text?: string;
+  query?: string;
+  offset?: number;
+  pageSize?: number;
   imageStoragePath?: string;
   imageMime?: string;
   audioStoragePath?: string;
@@ -37,18 +40,32 @@ type Body = {
   audioDurationMs?: number;
 };
 
+const CONCORDANCE_PAGE_SIZE = 20;
+
 function parseBody(raw: unknown): Body | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
   const conversationId = typeof o.conversationId === "string" ? o.conversationId : "";
   const mode = o.mode;
-  if (!conversationId || (mode !== "text" && mode !== "image" && mode !== "audio")) {
+  if (
+    !conversationId ||
+    (mode !== "text" && mode !== "image" && mode !== "audio" && mode !== "concordance_page")
+  ) {
     return null;
   }
+  const offset = typeof o.offset === "number" && Number.isFinite(o.offset) ? Math.max(0, Math.floor(o.offset)) : 0;
+  const requestedPageSize =
+    typeof o.pageSize === "number" && Number.isFinite(o.pageSize)
+      ? Math.floor(o.pageSize)
+      : CONCORDANCE_PAGE_SIZE;
+  const pageSize = Math.max(1, Math.min(50, requestedPageSize));
   return {
     conversationId,
     mode,
     text: typeof o.text === "string" ? o.text : undefined,
+    query: typeof o.query === "string" ? o.query : undefined,
+    offset,
+    pageSize,
     imageStoragePath:
       typeof o.imageStoragePath === "string" ? o.imageStoragePath : undefined,
     imageMime: typeof o.imageMime === "string" ? o.imageMime : undefined,
@@ -229,9 +246,16 @@ function parseAiPicks(raw: string, n: number): { picks: AiPick[] } | null {
 async function enrichRankedWithNeighbors(
   admin: NonNullable<ReturnType<typeof createSupabaseServiceClient>>,
   ranked: { c: SermonParagraphCandidate }[],
+  query: string,
+  offset: number,
+  pageSize: number,
+  conversationId: string,
 ) {
+  const end = Math.min(ranked.length, offset + pageSize);
+  const page = ranked.slice(offset, end);
   const results: Record<string, unknown>[] = [];
-  for (const { c } of ranked) {
+  const hasMore = end < ranked.length;
+  for (const { c } of page) {
     const n = await fetchNeighborParagraphs(admin, c.slug, c.paragraph_number);
     results.push({
       slug: c.slug,
@@ -246,9 +270,17 @@ async function enrichRankedWithNeighbors(
       prev_paragraph_text: n.prev_paragraph_text,
       next_paragraph_number: n.next_paragraph_number,
       next_paragraph_text: n.next_paragraph_text,
+      _source: "chat",
+      _query: query,
+      _conversation_id: conversationId,
+      _offset: offset,
+      _page_size: pageSize,
+      _next_offset: hasMore ? end : null,
+      _has_more: hasMore,
+      _total_count: ranked.length,
     });
   }
-  return results;
+  return { results, totalCount: ranked.length, hasMore, nextOffset: hasMore ? end : null };
 }
 
 async function extractSemanticIntent(
@@ -311,8 +343,8 @@ async function fetchSemanticCandidates(
   ]
     .map((x) => x.trim())
     .filter((x, i, arr) => x.length >= 3 && arr.indexOf(x) === i)
-    .slice(0, 10);
-  const MAX_CANDIDATES = 200;
+    .slice(0, 24);
+  const MAX_CANDIDATES = 900;
   const byKey = new Map<string, SermonParagraphCandidate>();
   const collect = async (q: string) => {
     const rows = await fetchSermonSearchCandidates(admin, q);
@@ -322,22 +354,26 @@ async function fetchSemanticCandidates(
       if (byKey.size >= MAX_CANDIDATES) break;
     }
   };
-  for (const q of queries.slice(0, 3)) {
+  for (const q of queries.slice(0, 6)) {
     await collect(q);
-    if (byKey.size >= MAX_CANDIDATES) break;
+    if (byKey.size >= 320) break;
   }
-  if (byKey.size < MAX_CANDIDATES) {
-    for (const q of queries.slice(3, 8)) {
+  if (byKey.size < 620) {
+    for (const q of queries.slice(6, 16)) {
       await collect(q);
-      if (byKey.size >= MAX_CANDIDATES) break;
+      if (byKey.size >= 700) break;
     }
   }
-  if (byKey.size < 80) {
-    const broad = [semantic?.topic ?? "", ...(semantic?.concepts ?? []).slice(0, 3)]
+  if (byKey.size < 700) {
+    const broad = [
+      semantic?.topic ?? "",
+      semantic?.intent ?? "",
+      ...(semantic?.concepts ?? []).slice(0, 5),
+    ]
       .filter(Boolean)
       .join(" ");
     if (broad.trim().length >= 3) await collect(broad);
-    for (const q of queries.slice(8)) {
+    for (const q of queries.slice(16)) {
       await collect(q);
       if (byKey.size >= MAX_CANDIDATES) break;
     }
@@ -369,7 +405,7 @@ async function fetchSemanticCandidates(
     return s;
   };
   out.sort((a, b) => score(b) - score(a));
-  return out.slice(0, 200);
+  return out.slice(0, MAX_CANDIDATES);
 }
 
 function buildRankingPrompt(query: string, semantic: SemanticIntent | null, candidates: SermonParagraphCandidate[]) {
@@ -454,6 +490,87 @@ export async function POST(request: Request) {
 
   if (convErr || !conv || conv.user_id !== user.id) {
     return NextResponse.json({ error: "conversation_inaccessible" }, { status: 403 });
+  }
+
+  if (body.mode === "concordance_page") {
+    const query = (body.query ?? "").trim();
+    if (!query) {
+      return NextResponse.json({ error: "requete_pagination_invalide" }, { status: 400 });
+    }
+    const offset = Math.max(0, Math.floor(body.offset ?? 0));
+    const pageSize = Math.max(1, Math.min(50, Math.floor(body.pageSize ?? CONCORDANCE_PAGE_SIZE)));
+
+    let semantic: SemanticIntent | null = null;
+    try {
+      semantic = await extractSemanticIntent(openai, query);
+    } catch {
+      semantic = null;
+    }
+    const candidates = await fetchSemanticCandidates(admin, query, semantic);
+    if (candidates.length === 0) {
+      return NextResponse.json({
+        ok: true,
+        results: [],
+        total_count: 0,
+        offset,
+        page_size: pageSize,
+        has_more: false,
+        next_offset: null,
+        message: EMPTY_CONCORDANCE_MESSAGE,
+      });
+    }
+
+    const rerankPool = candidates.slice(0, 260);
+    let rankRaw = "";
+    try {
+      rankRaw = await runStructuredJsonCompletion(
+        openai,
+        [
+          {
+            role: "system",
+            content: `${MOBOKO_SOURCE_ONLY_LOCK}
+
+Tu classes des extraits de sermons par pertinence (liste numérotée fournie).
+Réponds UNIQUEMENT par un JSON valide : {"picks":[{"i":1},...]}
+Maximum 8 indices, du plus pertinent au moins pertinent. Chaque i doit être présent dans la liste.
+Aucune phrase hors JSON, aucun champ supplémentaire. Si rien ne convient : {"picks":[]}.`,
+          },
+          { role: "user", content: buildRankingPrompt(query, semantic, rerankPool) },
+        ],
+        { maxTokens: 360, temperature: 0.08, timeoutMs: 28_000 },
+      );
+    } catch {
+      rankRaw = "";
+    }
+    const parsed = rankRaw ? parseAiPicks(rankRaw, rerankPool.length) : null;
+    const aiRanked = (parsed?.picks ?? [])
+      .filter((p): p is { i: number } => typeof p.i === "number")
+      .map((p) => rerankPool[p.i - 1])
+      .filter((c): c is SermonParagraphCandidate => Boolean(c));
+    const aiKeys = new Set(aiRanked.map((c) => `${c.slug}:${c.paragraph_number}`));
+    const ordered = [...aiRanked, ...candidates.filter((c) => !aiKeys.has(`${c.slug}:${c.paragraph_number}`))];
+    const ranked = ordered
+      .map((c) => ({ c }))
+      .filter((x): x is { c: SermonParagraphCandidate } => Boolean(x.c));
+
+    const page = await enrichRankedWithNeighbors(
+      admin,
+      ranked,
+      query,
+      offset,
+      pageSize,
+      body.conversationId,
+    );
+    return NextResponse.json({
+      ok: true,
+      results: page.results,
+      total_count: page.totalCount,
+      offset,
+      page_size: pageSize,
+      has_more: page.hasMore,
+      next_offset: page.nextOffset,
+      message: page.totalCount === 0 ? EMPTY_CONCORDANCE_MESSAGE : null,
+    });
   }
 
   const { data: settingRows } = await admin
@@ -642,6 +759,7 @@ export async function POST(request: Request) {
         sermonContextCount = candidates.length;
 
         if (candidates.length > 0) {
+          const rerankPool = candidates.slice(0, 260);
           let rankRaw: string;
           try {
             rankRaw = await runStructuredJsonCompletion(
@@ -656,7 +774,7 @@ Réponds UNIQUEMENT par un JSON valide : {"picks":[{"i":1},...]}
 Maximum 8 indices, du plus pertinent au moins pertinent. Chaque i doit être présent dans la liste.
 Aucune phrase hors JSON, aucun champ supplémentaire. Si rien ne convient : {"picks":[]}.`,
                 },
-                { role: "user", content: buildRankingPrompt(userContent, semantic, candidates) },
+                { role: "user", content: buildRankingPrompt(userContent, semantic, rerankPool) },
               ],
               { maxTokens: 360, temperature: 0.08, timeoutMs: 28_000 },
             );
@@ -665,11 +783,16 @@ Aucune phrase hors JSON, aucun champ supplémentaire. Si rien ne convient : {"pi
             rankRaw = "";
           }
 
-          const parsed = rankRaw ? parseAiPicks(rankRaw, candidates.length) : null;
+          const parsed = rankRaw ? parseAiPicks(rankRaw, rerankPool.length) : null;
           const pickList = parsed?.picks ?? [];
-          const ranked = pickList
+          const aiRanked = pickList
             .filter((p): p is { i: number } => typeof p.i === "number")
-            .map((p) => ({ c: candidates[p.i - 1] }))
+            .map((p) => rerankPool[p.i - 1])
+            .filter((c): c is SermonParagraphCandidate => Boolean(c));
+          const aiKeys = new Set(aiRanked.map((c) => `${c.slug}:${c.paragraph_number}`));
+          const ordered = [...aiRanked, ...candidates.filter((c) => !aiKeys.has(`${c.slug}:${c.paragraph_number}`))];
+          const ranked = ordered
+            .map((c) => ({ c }))
             .filter((x): x is { c: SermonParagraphCandidate } => Boolean(x.c));
 
           if (ranked.length === 0) {
@@ -680,13 +803,25 @@ Aucune phrase hors JSON, aucun champ supplémentaire. Si rien ne convient : {"pi
               moboko_kind: "sermon_concordance_empty",
             };
           } else {
-            const results = await enrichRankedWithNeighbors(admin, ranked);
+            const page = await enrichRankedWithNeighbors(
+              admin,
+              ranked,
+              userContent,
+              0,
+              CONCORDANCE_PAGE_SIZE,
+              body.conversationId,
+            );
             assistantText = "";
             metaAssistant = {
               model: getChatModel(),
               sermon_context_count: sermonContextCount,
               moboko_kind: "sermon_concordance",
-              results,
+              results: page.results,
+              total_count: page.totalCount,
+              offset: 0,
+              page_size: CONCORDANCE_PAGE_SIZE,
+              has_more: page.hasMore,
+              next_offset: page.nextOffset,
             };
           }
         } else {

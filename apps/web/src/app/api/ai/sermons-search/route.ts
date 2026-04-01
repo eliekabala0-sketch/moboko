@@ -18,7 +18,9 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const maxDuration = 90;
 
-type Body = { query?: string };
+type Body = { query?: string; offset?: number; pageSize?: number };
+const CONCORDANCE_PAGE_SIZE = 20;
+const EMPTY_CONCORDANCE_MESSAGE = "Aucun paragraphe exact trouvé pour cette recherche.";
 type SemanticIntent = {
   search_mode:
     | "exact_quote_search"
@@ -52,13 +54,21 @@ type SemanticIntent = {
   maybe_meant: string | null;
 };
 
-function parseBody(raw: unknown): string | null {
+function parseBody(raw: unknown): { query: string; offset: number; pageSize: number } | null {
   if (!raw || typeof raw !== "object") return null;
-  const q = (raw as Body).query;
+  const obj = raw as Body;
+  const q = obj.query;
   if (typeof q !== "string") return null;
   const t = q.trim();
   if (t.length < 8 || t.length > 2000) return null;
-  return t;
+  const offset =
+    typeof obj.offset === "number" && Number.isFinite(obj.offset) ? Math.max(0, Math.floor(obj.offset)) : 0;
+  const requestedPageSize =
+    typeof obj.pageSize === "number" && Number.isFinite(obj.pageSize)
+      ? Math.floor(obj.pageSize)
+      : CONCORDANCE_PAGE_SIZE;
+  const pageSize = Math.max(1, Math.min(50, requestedPageSize));
+  return { query: t, offset, pageSize };
 }
 
 type AiPick = { i?: number };
@@ -86,7 +96,7 @@ function parseAiPicks(raw: string, n: number): { picks: AiPick[] } | null {
     if (i === null || i < 1 || i > n || used.has(i)) continue;
     used.add(i);
     picks.push({ i });
-    if (picks.length >= 12) break;
+    if (picks.length >= 80) break;
   }
   return { picks };
 }
@@ -114,6 +124,27 @@ function buildRankingPrompt(
   ]
     .filter((line) => line !== "")
     .join("\n");
+}
+
+function toPagedHits(
+  ordered: SermonParagraphCandidate[],
+  offset: number,
+  pageSize: number,
+  query: string,
+) {
+  const safeOffset = Math.max(0, offset);
+  const end = Math.min(ordered.length, safeOffset + pageSize);
+  const page = ordered.slice(safeOffset, end);
+  const hasMore = end < ordered.length;
+  return {
+    page,
+    totalCount: ordered.length,
+    hasMore,
+    nextOffset: hasMore ? end : null,
+    query,
+    offset: safeOffset,
+    pageSize,
+  };
 }
 
 function parseSemanticIntent(raw: string): SemanticIntent | null {
@@ -277,41 +308,42 @@ async function fetchSemanticCandidates(
   ]
     .map((x) => x.trim())
     .filter((x, i, arr) => x.length >= 3 && arr.indexOf(x) === i)
-    .slice(0, 18);
+    .slice(0, 26);
 
+  const MAX_CANDIDATES = 1200;
   const byKey = new Map<string, SermonParagraphCandidate>();
   const collect = async (q: string) => {
     const rows = await fetchSermonSearchCandidates(admin, q);
     for (const c of rows) {
       const k = `${c.slug}:${c.paragraph_number}`;
       if (!byKey.has(k)) byKey.set(k, c);
-      if (byKey.size >= 520) break;
+      if (byKey.size >= MAX_CANDIDATES) break;
     }
   };
 
-  // Wave A: principal + intent.
-  for (const q of queries.slice(0, 4)) {
+  // Wave A: principal + intent + citation.
+  for (const q of queries.slice(0, 8)) {
     await collect(q);
-    if (byKey.size >= 260) break;
+    if (byKey.size >= 380) break;
   }
   // Wave B: concepts/expansions.
-  if (byKey.size < 260) {
-    for (const q of queries.slice(4, 12)) {
+  if (byKey.size < 800) {
+    for (const q of queries.slice(8, 18)) {
       await collect(q);
-      if (byKey.size >= 380) break;
+      if (byKey.size >= 900) break;
     }
   }
   // Wave C: fallback large.
-  if (byKey.size < 220) {
-    const broad = [sem?.topic ?? "", ...(sem?.concepts ?? []).slice(0, 4)]
+  if (byKey.size < 900) {
+    const broad = [sem?.topic ?? "", sem?.intent ?? "", ...(sem?.concepts ?? []).slice(0, 5)]
       .filter(Boolean)
       .join(" ");
     if (broad.trim().length >= 3) {
       await collect(broad);
     }
-    for (const q of queries.slice(12)) {
+    for (const q of queries.slice(18)) {
       await collect(q);
-      if (byKey.size >= 500) break;
+      if (byKey.size >= MAX_CANDIDATES) break;
     }
   }
   let out = Array.from(byKey.values());
@@ -342,7 +374,7 @@ async function fetchSemanticCandidates(
     return s;
   };
   out.sort((a, b) => score(b) - score(a));
-  return out.slice(0, 500);
+  return out.slice(0, MAX_CANDIDATES);
 }
 
 export async function POST(request: Request) {
@@ -368,6 +400,8 @@ export async function POST(request: Request) {
   }
 
   let query: string;
+  let offset = 0;
+  let pageSize = CONCORDANCE_PAGE_SIZE;
   try {
     const json = (await request.json()) as unknown;
     const p = parseBody(json);
@@ -377,7 +411,9 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    query = p;
+    query = p.query;
+    offset = p.offset;
+    pageSize = p.pageSize;
   } catch {
     return NextResponse.json({ error: "json_invalide" }, { status: 400 });
   }
@@ -428,12 +464,15 @@ export async function POST(request: Request) {
   const candidates = await fetchSemanticCandidates(admin, query, semantic);
 
   if (candidates.length === 0) {
-    const ref =
-      semantic?.maybe_meant?.trim() || semantic?.expansions?.[0]?.trim() || null;
     return NextResponse.json({
       ok: true,
       results: [],
-      reformulation: ref ? ref.slice(0, 120) : null,
+      total_count: 0,
+      offset,
+      page_size: pageSize,
+      has_more: false,
+      next_offset: null,
+      message: EMPTY_CONCORDANCE_MESSAGE,
       credits_charged: 0,
       credit_cost: creditCost,
       balance_after: balance,
@@ -441,7 +480,9 @@ export async function POST(request: Request) {
     });
   }
 
-  if (!billingExempt && creditCost > 0 && balance < creditCost) {
+  const isFirstPage = offset === 0;
+
+  if (isFirstPage && !billingExempt && creditCost > 0 && balance < creditCost) {
     return NextResponse.json(
       {
         error: "credits_insuffisants",
@@ -453,7 +494,8 @@ export async function POST(request: Request) {
     );
   }
 
-  const userPrompt = buildRankingPrompt(query, semantic, candidates);
+  const rerankPool = candidates.slice(0, 320);
+  const userPrompt = buildRankingPrompt(query, semantic, rerankPool);
   const messages: ChatCompletionMessageParam[] = [
     {
       role: "system",
@@ -461,7 +503,7 @@ export async function POST(request: Request) {
 Choisis ceux qui répondent le mieux à la question (sens, thème, reformulations).
 N'invente jamais de numéro : uniquement des "i" présents dans la liste.
 Réponds UNIQUEMENT par un JSON valide : {"picks":[{"i":1},...]}
-Maximum 12 entrées, les plus pertinentes en premier. Aucun summary, aucune note, aucun texte hors JSON.
+Maximum 80 entrées, les plus pertinentes en premier. Aucun summary, aucune note, aucun texte hors JSON.
 Si rien ne convient : {"picks":[]}`,
     },
     { role: "user", content: userPrompt },
@@ -470,8 +512,9 @@ Si rien ne convient : {"picks":[]}`,
   let rawJson: string;
   try {
     rawJson = await runStructuredJsonCompletion(openai, messages, {
-      maxTokens: 1400,
-      temperature: 0.2,
+      maxTokens: 1200,
+      temperature: 0.15,
+      timeoutMs: 28_000,
     });
   } catch (e) {
     console.error("[api/ai/sermons-search] completion", e);
@@ -485,7 +528,7 @@ Si rien ne convient : {"picks":[]}`,
     return NextResponse.json({ error: "reponse_ia_vide" }, { status: 502 });
   }
 
-  const parsed = parseAiPicks(rawJson, candidates.length);
+  const parsed = parseAiPicks(rawJson, rerankPool.length);
   if (parsed === null) {
     return NextResponse.json(
       { error: "reponse_ia_invalide", detail: "Le classement IA n’a pas pu être interprété." },
@@ -494,50 +537,44 @@ Si rien ne convient : {"picks":[]}`,
   }
 
   const { picks } = parsed;
-
-  const baseResults = picks
+  const aiRanked = picks
     .filter((pick): pick is { i: number } => typeof pick.i === "number")
-    .map((pick) => {
-      const c = candidates[pick.i - 1];
-      if (!c) return null;
-      return {
-        slug: c.slug,
-        title: c.title,
-        year: c.year,
-        preached_on: c.preached_on,
-        location: c.location,
-        paragraph_number: c.paragraph_number,
-        paragraph_text: c.paragraph_text,
-      };
-    })
-    .filter((r): r is NonNullable<typeof r> => r != null);
+    .map((pick) => rerankPool[pick.i - 1])
+    .filter((c): c is SermonParagraphCandidate => Boolean(c));
+  const aiKeys = new Set(aiRanked.map((c) => `${c.slug}:${c.paragraph_number}`));
+  const ordered = [...aiRanked, ...candidates.filter((c) => !aiKeys.has(`${c.slug}:${c.paragraph_number}`))];
+  const page = toPagedHits(ordered, offset, pageSize, query);
 
   const results: Record<string, unknown>[] = [];
-  for (const r of baseResults) {
-    const n = await fetchNeighborParagraphs(admin, r.slug, r.paragraph_number);
+  for (const c of page.page) {
+    const n = await fetchNeighborParagraphs(admin, c.slug, c.paragraph_number);
     results.push({
-      slug: r.slug,
-      title: r.title,
-      year: r.year,
-      preached_on: r.preached_on,
-      location: r.location ?? null,
-      paragraph_number: r.paragraph_number,
-      paragraph_text: r.paragraph_text,
+      slug: c.slug,
+      title: c.title,
+      year: c.year,
+      preached_on: c.preached_on,
+      location: c.location ?? null,
+      paragraph_number: c.paragraph_number,
+      paragraph_text: c.paragraph_text,
       prev_paragraph_number: n.prev_paragraph_number,
       prev_paragraph_text: n.prev_paragraph_text,
       next_paragraph_number: n.next_paragraph_number,
       next_paragraph_text: n.next_paragraph_text,
+      _source: "sermons-search",
+      _query: page.query,
+      _offset: page.offset,
+      _page_size: page.pageSize,
+      _next_offset: page.nextOffset,
+      _has_more: page.hasMore,
+      _total_count: page.totalCount,
     });
   }
-
-  const reformulationWhenEmpty =
-    semantic?.maybe_meant?.trim() || semantic?.expansions?.[0]?.trim() || null;
 
   let balanceAfter = balance;
   let billingSkipped = billingExempt;
   let creditsDebited = 0;
 
-  if (creditCost > 0) {
+  if (isFirstPage && creditCost > 0) {
     const { data: debit, error: dErr } = await admin.rpc("consume_credits_atomic", {
       p_user_id: user.id,
       p_amount: creditCost,
@@ -571,10 +608,12 @@ Si rien ne convient : {"picks":[]}`,
   return NextResponse.json({
     ok: true,
     results,
-    reformulation:
-      results.length === 0 && reformulationWhenEmpty
-        ? reformulationWhenEmpty.slice(0, 120)
-        : null,
+    total_count: page.totalCount,
+    offset: page.offset,
+    page_size: page.pageSize,
+    has_more: page.hasMore,
+    next_offset: page.nextOffset,
+    message: page.totalCount === 0 ? EMPTY_CONCORDANCE_MESSAGE : null,
     credits_charged: creditsDebited,
     credit_cost: creditCost,
     balance_after: balanceAfter,
