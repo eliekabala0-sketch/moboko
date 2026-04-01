@@ -12,6 +12,8 @@ import {
   fetchSermonSearchCandidates,
   type SermonParagraphCandidate,
 } from "@/lib/sermons/ai-sermon-search-server";
+import { resolveHybridRetrieval } from "@/lib/sermons/retrieval-resolve";
+import type { SemanticIntent } from "@/lib/sermons/semantic-intent";
 import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
 import { getUserFromApiRequest } from "@/lib/supabase/api-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
@@ -81,49 +83,6 @@ function pathBelongsToUser(path: string, userId: string) {
   return path.startsWith(`${userId}/`);
 }
 
-type SemanticIntent = {
-  search_mode:
-    | "exact_quote_search"
-    | "theme_search"
-    | "situation_search"
-    | "story_search"
-    | "prayer_search"
-    | "doctrinal_search"
-    | "time_bounded_search"
-    | "preaching_prep_search"
-    | "comfort_or_exhortation_search"
-    | "sermon_title_then_topic_search";
-  user_need:
-    | "simple_answer"
-    | "orientation"
-    | "exhortation"
-    | "comfort"
-    | "preaching_prep"
-    | "citation_list"
-    | "prayer_list"
-    | "story_list";
-  intent: string;
-  topic: string;
-  concepts: string[];
-  expansions: string[];
-  content_types: string[];
-  quoted_phrase: string | null;
-  sermon_hint: string | null;
-  year_from: number | null;
-  year_to: number | null;
-  maybe_meant: string | null;
-  /** Phrases de rappel ciblées par le sens (pas des mots isolés pièges). */
-  retrieval_phrases: string[];
-  /** Termes à ne pas utiliser seuls comme requête (évite faux positifs lexicaux). */
-  avoid_lexical_bait: string[];
-  /** Consigne interne pour le classement : type de passage attendu / à exclure. */
-  passage_brief: string;
-  /** Si non null, limiter les candidats à ce sermon (slug DB). */
-  restrict_sermon_slug: string | null;
-  /** Suite d’une recherche : lier au tour précédent quand c’est explicite. */
-  follow_up_continuity: boolean;
-};
-
 type AiPick = { i?: number };
 
 const EMPTY_CONCORDANCE_MESSAGE = "Aucun paragraphe exact trouvé pour cette recherche.";
@@ -132,127 +91,6 @@ const MOBOKO_SOURCE_ONLY_LOCK = `Règles Moboko (impératif) :
 - Moboko ne doit jamais utiliser des connaissances générales.
 - Moboko ne répond que par des passages présents dans la base.
 - Si aucun passage n’est trouvé dans les extraits fournis, Moboko ne répond pas à l’utilisateur : produis uniquement le JSON demandé sans autre texte, par ex. {"picks":[]}.`;
-
-function parseSemanticIntent(raw: string): SemanticIntent | null {
-  let data: unknown;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (!data || typeof data !== "object") return null;
-  const o = data as Record<string, unknown>;
-  const modeRaw =
-    typeof o.search_mode === "string" ? o.search_mode.trim() : "theme_search";
-  const search_mode: SemanticIntent["search_mode"] = (
-    [
-      "exact_quote_search",
-      "theme_search",
-      "situation_search",
-      "story_search",
-      "prayer_search",
-      "doctrinal_search",
-      "time_bounded_search",
-      "preaching_prep_search",
-      "comfort_or_exhortation_search",
-      "sermon_title_then_topic_search",
-    ] as const
-  ).includes(modeRaw as SemanticIntent["search_mode"])
-    ? (modeRaw as SemanticIntent["search_mode"])
-    : "theme_search";
-  const needRaw =
-    typeof o.user_need === "string" ? o.user_need.trim() : "orientation";
-  const user_need: SemanticIntent["user_need"] = (
-    [
-      "simple_answer",
-      "orientation",
-      "exhortation",
-      "comfort",
-      "preaching_prep",
-      "citation_list",
-      "prayer_list",
-      "story_list",
-    ] as const
-  ).includes(needRaw as SemanticIntent["user_need"])
-    ? (needRaw as SemanticIntent["user_need"])
-    : "orientation";
-  const intent = typeof o.intent === "string" ? o.intent.trim().slice(0, 240) : "";
-  const topic = typeof o.topic === "string" ? o.topic.trim().slice(0, 200) : "";
-  const maybe_meant = typeof o.maybe_meant === "string" ? o.maybe_meant.trim().slice(0, 240) : null;
-  const quoted_phrase =
-    typeof o.quoted_phrase === "string" ? o.quoted_phrase.trim().slice(0, 240) : null;
-  const sermon_hint =
-    typeof o.sermon_hint === "string" ? o.sermon_hint.trim().slice(0, 240) : null;
-  const year_from =
-    typeof o.year_from === "number" && Number.isFinite(o.year_from)
-      ? Math.max(1900, Math.min(2100, Math.floor(o.year_from)))
-      : null;
-  const year_to =
-    typeof o.year_to === "number" && Number.isFinite(o.year_to)
-      ? Math.max(1900, Math.min(2100, Math.floor(o.year_to)))
-      : null;
-  const concepts = Array.isArray(o.concepts)
-    ? o.concepts
-        .filter((x): x is string => typeof x === "string")
-        .map((x) => x.trim())
-        .filter(Boolean)
-        .slice(0, 10)
-    : [];
-  const expansions = Array.isArray(o.expansions)
-    ? o.expansions
-        .filter((x): x is string => typeof x === "string")
-        .map((x) => x.trim())
-        .filter(Boolean)
-        .slice(0, 8)
-    : [];
-  const content_types = Array.isArray(o.content_types)
-    ? o.content_types
-        .filter((x): x is string => typeof x === "string")
-        .map((x) => x.trim().toLowerCase())
-        .filter(Boolean)
-        .slice(0, 6)
-    : [];
-  const retrieval_phrases = Array.isArray(o.retrieval_phrases)
-    ? o.retrieval_phrases
-        .filter((x): x is string => typeof x === "string")
-        .map((x) => x.trim())
-        .filter(Boolean)
-        .slice(0, 8)
-    : [];
-  const avoid_lexical_bait = Array.isArray(o.avoid_lexical_bait)
-    ? o.avoid_lexical_bait
-        .filter((x): x is string => typeof x === "string")
-        .map((x) => x.trim().toLowerCase())
-        .filter(Boolean)
-        .slice(0, 10)
-    : [];
-  const passage_brief =
-    typeof o.passage_brief === "string" ? o.passage_brief.trim().slice(0, 420) : "";
-  const restrict_sermon_slug =
-    typeof o.restrict_sermon_slug === "string" && o.restrict_sermon_slug.trim()
-      ? o.restrict_sermon_slug.trim().slice(0, 220)
-      : null;
-  const follow_up_continuity = o.follow_up_continuity === true;
-  return {
-    search_mode,
-    user_need,
-    intent,
-    topic,
-    concepts,
-    expansions,
-    content_types,
-    quoted_phrase,
-    sermon_hint,
-    year_from,
-    year_to,
-    maybe_meant,
-    retrieval_phrases,
-    avoid_lexical_bait,
-    passage_brief,
-    restrict_sermon_slug,
-    follow_up_continuity,
-  };
-}
 
 const CHAT_RANK_MAX_PICKS = 10;
 
@@ -279,39 +117,6 @@ function parseAiPicks(raw: string, n: number, maxPicks = CHAT_RANK_MAX_PICKS): {
     if (picks.length >= maxPicks) break;
   }
   return { picks };
-}
-
-function normQueryTokens(s: string): string[] {
-  const t = s
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return t.match(/[\p{L}\p{N}]+/gu) ?? [];
-}
-
-/** Requête à un seul mot (ou seulement des « appâts » lexicaux) : ne pas l’envoyer seule à la base. */
-function isShallowBaitOnly(q: string, bait: Set<string>): boolean {
-  const words = normQueryTokens(q);
-  if (words.length === 0) return true;
-  if (words.length > 3) return false;
-  return words.every((w) => bait.has(w));
-}
-
-function dedupeQueries(parts: string[]): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const p of parts) {
-    const t = p.trim();
-    if (t.length < 3) continue;
-    const k = t.toLowerCase();
-    if (seen.has(k)) continue;
-    seen.add(k);
-    out.push(t);
-  }
-  return out;
 }
 
 type TurnCtx = { block: string; primarySlug: string | null };
@@ -363,12 +168,6 @@ function buildConcordanceTurnContext(rows: DbMessageRow[]): TurnCtx {
   return { block: lines.join("\n"), primarySlug };
 }
 
-function resolveSemanticWithFollowUp(semantic: SemanticIntent, primarySlug: string | null): SemanticIntent {
-  if (semantic.restrict_sermon_slug) return semantic;
-  if (!semantic.follow_up_continuity || !primarySlug) return semantic;
-  return { ...semantic, restrict_sermon_slug: primarySlug };
-}
-
 async function enrichRankedWithNeighbors(
   admin: NonNullable<ReturnType<typeof createSupabaseServiceClient>>,
   ranked: { c: SermonParagraphCandidate }[],
@@ -409,133 +208,6 @@ async function enrichRankedWithNeighbors(
   return { results, totalCount: ranked.length, hasMore, nextOffset: hasMore ? end : null };
 }
 
-async function extractSemanticIntent(
-  openai: NonNullable<ReturnType<typeof getOpenAIClient>>,
-  query: string,
-  turnContextBlock: string | null = null,
-): Promise<SemanticIntent | null> {
-  const ctx =
-    turnContextBlock && turnContextBlock.trim()
-      ? `\n\n## Contexte poursuite (ne pas ignorer si la question s’y réfère)\n${turnContextBlock.trim()}`
-      : "";
-  const messages: ChatCompletionMessageParam[] = [
-    {
-      role: "system",
-      content: `${MOBOKO_SOURCE_ONLY_LOCK}
-
-Tu analyses une demande en français UNIQUEMENT pour paramétrer une recherche documentaire dans des sermons (aucune réponse visible à l’utilisateur, aucun sermon inventé).
-
-Retourne UNIQUEMENT un JSON :
-{"search_mode":"...","user_need":"...","intent":"...","topic":"...","concepts":["..."],"expansions":["..."],"content_types":["..."],"quoted_phrase":"...|null","sermon_hint":"...|null","year_from":1963|null,"year_to":1965|null,"maybe_meant":"...|null","retrieval_phrases":["..."],"avoid_lexical_bait":["..."],"passage_brief":"...","restrict_sermon_slug":"...|null","follow_up_continuity":false}
-
-search_mode parmi: exact_quote_search, theme_search, situation_search, story_search, prayer_search, doctrinal_search, time_bounded_search, preaching_prep_search, comfort_or_exhortation_search, sermon_title_then_topic_search.
-user_need parmi: simple_answer, orientation, exhortation, comfort, preaching_prep, citation_list, prayer_list, story_list.
-
-Règles impératives :
-- Comprends le SENS et le TYPE DE PASSAGE demandé (récit narratif, prière réelle, consolation, développement d’un texte biblique précis, thème dans un périmètre…), pas une collection de mots pris dans la phrase.
-- Ne déduis PAS une stratégie de recherche exclusivement des mots surface de la question (ex. « histoires » peut désigner des récits/anecdotes du prophète, pas obligatoirement le mot « histoire » dans le texte).
-- retrieval_phrases : 3 à 8 phrases ou expressions SUBSTANTIVES pour interroger la base sur le fond (scènes, actions, personnages, références, formulations proches du contenu attendu). Zéro mot vague seul si la demande porte sur un type de passage.
-- avoid_lexical_bait : mots ou courts trigrammes qui viennent de l’utilisateur mais qui mèneraient à des faux positifs s’ils servent seuls (ex. pour « il raconte des histoires » : inclure "histoire", "histoires" sauf si citation exacte recherchée).
-- passage_brief : une phrase interne qui décrit ce qui compte pour RETENIR ou ÉCARTER un paragraphe au classement (ex. « garder seulement un vrai récit raconté au passé, dialogue, anecdote ; écarter un simple emploi du mot histoire »).
-- follow_up_continuity : true si la phrase supposerait la réponse précédente (« toujours dans ce sermon », « encore », « plus loin », « dans ce message », « précise », etc.).
-- restrict_sermon_slug : le slug exact du sermon si la demande ou le contexte le fixe (y compris slug listé dans la poursuite) ; sinon null.
-- content_types : indique le(s) type(s) de passage visés (ex. narrative_scene, prayer_address, comfort, scripture_exposition, jewish_theme…).
-- tolérance orthographe / fautes / formulations brutes comme avant.
-- Ne pas inventer de sources.${ctx}`,
-    },
-    { role: "user", content: query },
-  ];
-  const raw = await runStructuredJsonCompletion(openai, messages, {
-    maxTokens: 520,
-    temperature: 0.08,
-    timeoutMs: 26_000,
-  });
-  if (!raw) return null;
-  return parseSemanticIntent(raw);
-}
-
-async function fetchSemanticCandidates(
-  admin: NonNullable<ReturnType<typeof createSupabaseServiceClient>>,
-  query: string,
-  semantic: SemanticIntent | null,
-) {
-  const bait = new Set(semantic?.avoid_lexical_bait ?? []);
-  const restrict = semantic?.restrict_sermon_slug?.trim() ?? null;
-  const quoted = semantic?.quoted_phrase ? [semantic.quoted_phrase] : [];
-  const titleThenTopic =
-    semantic?.search_mode === "sermon_title_then_topic_search" && semantic?.sermon_hint
-      ? [`${semantic.sermon_hint} ${semantic.topic || query}`]
-      : [];
-
-  const candidatesRaw = dedupeQueries([
-    ...(semantic?.retrieval_phrases ?? []),
-    semantic?.intent ?? "",
-    semantic?.topic ?? "",
-    ...quoted,
-    ...titleThenTopic,
-    ...(semantic?.expansions ?? []),
-    ...(semantic?.concepts ?? []),
-    query,
-  ]).filter((q) => !isShallowBaitOnly(q, bait));
-
-  const queries = candidatesRaw.slice(0, 26);
-  const MAX_CANDIDATES = 900;
-  const byKey = new Map<string, SermonParagraphCandidate>();
-  const collect = async (q: string) => {
-    const rows = await fetchSermonSearchCandidates(admin, q);
-    for (const c of rows) {
-      if (restrict && c.slug !== restrict) continue;
-      const k = `${c.slug}:${c.paragraph_number}`;
-      if (!byKey.has(k)) byKey.set(k, c);
-      if (byKey.size >= MAX_CANDIDATES) break;
-    }
-  };
-  for (const q of queries.slice(0, 6)) {
-    await collect(q);
-    if (byKey.size >= 320) break;
-  }
-  if (byKey.size < 620) {
-    for (const q of queries.slice(6, 16)) {
-      await collect(q);
-      if (byKey.size >= 700) break;
-    }
-  }
-  if (byKey.size < 700) {
-    const broad = dedupeQueries([
-      semantic?.intent ?? "",
-      semantic?.topic ?? "",
-      ...(semantic?.concepts ?? []).slice(0, 5),
-    ])
-      .filter((x) => x.length >= 4 && !isShallowBaitOnly(x, bait))
-      .join(" ");
-    if (broad.trim().length >= 4 && !isShallowBaitOnly(broad, bait)) await collect(broad);
-    for (const q of queries.slice(16)) {
-      await collect(q);
-      if (byKey.size >= MAX_CANDIDATES) break;
-    }
-  }
-  let out = Array.from(byKey.values());
-  if (restrict) {
-    out = out.filter((c) => c.slug === restrict);
-  }
-  if (semantic?.year_from != null || semantic?.year_to != null) {
-    const minY = semantic.year_from ?? 1900;
-    const maxY = semantic.year_to ?? 2100;
-    out = out.filter((c) => c.year == null || (c.year >= minY && c.year <= maxY));
-  }
-  const score = (c: SermonParagraphCandidate) => {
-    const t = c.paragraph_text.toLowerCase();
-    let s = 0;
-    if (semantic?.search_mode === "exact_quote_search" && semantic.quoted_phrase) {
-      if (t.includes(semantic.quoted_phrase.toLowerCase())) s += 12;
-    }
-    if (semantic?.topic && t.includes(semantic.topic.toLowerCase())) s += 2;
-    return s;
-  };
-  out.sort((a, b) => score(b) - score(a));
-  return out.slice(0, MAX_CANDIDATES);
-}
-
 function buildRankingPrompt(query: string, semantic: SemanticIntent | null, candidates: SermonParagraphCandidate[]) {
   const lines = candidates.map((c, idx) => {
     const y = c.year != null ? String(c.year) : "";
@@ -545,8 +217,13 @@ function buildRankingPrompt(query: string, semantic: SemanticIntent | null, cand
   const types = (semantic?.content_types ?? []).join(", ");
   const scope =
     semantic?.restrict_sermon_slug ? `Périmètre sermon (slug): ${semantic.restrict_sermon_slug}` : "Périmètre: bibliothèque";
+  const routing =
+    semantic != null
+      ? `Plan retrieval: ${semantic.routing_source} (confiance ${semantic.confidence})`
+      : "";
   return [
     `Question: ${query}`,
+    routing,
     `Intent: ${semantic?.intent || "(non déterminé)"}`,
     `Mode: ${semantic?.search_mode || "theme_search"}`,
     `Besoin: ${semantic?.user_need || "orientation"}`,
@@ -637,13 +314,14 @@ export async function POST(request: Request) {
     const offset = Math.max(0, Math.floor(body.offset ?? 0));
     const pageSize = Math.max(1, Math.min(50, Math.floor(body.pageSize ?? CONCORDANCE_PAGE_SIZE)));
 
-    let semantic: SemanticIntent | null = null;
-    try {
-      semantic = await extractSemanticIntent(openai, query, null);
-    } catch {
-      semantic = null;
-    }
-    const candidates = await fetchSemanticCandidates(admin, query, semantic);
+    const hybridPage = await resolveHybridRetrieval(admin, openai, query, {
+      primarySlug: null,
+      turnContextBlock: null,
+      profile: "chat",
+    });
+    const semantic = hybridPage.semantic;
+    const candidates = hybridPage.candidates;
+    const skipRankingLlm = hybridPage.skipRankingLlm;
     if (candidates.length === 0) {
       return NextResponse.json({
         ok: true,
@@ -659,26 +337,28 @@ export async function POST(request: Request) {
 
     const rerankPool = candidates.slice(0, 260);
     let rankRaw = "";
-    try {
-      rankRaw = await runStructuredJsonCompletion(
-        openai,
-        [
-          {
-            role: "system",
-            content: `${MOBOKO_SOURCE_ONLY_LOCK}
+    if (!skipRankingLlm) {
+      try {
+        rankRaw = await runStructuredJsonCompletion(
+          openai,
+          [
+            {
+              role: "system",
+              content: `${MOBOKO_SOURCE_ONLY_LOCK}
 
 Tu classes des extraits de sermons par pertinence sémantique (liste numérotée fournie).
 Privilégie l’adéquation au type de passage et à l’intent ; refuse les extraits qui ne font que partager un mot avec la question sans correspondre au besoin réel.
 Réponds UNIQUEMENT par un JSON valide : {"picks":[{"i":1},...]}
 Maximum ${CHAT_RANK_MAX_PICKS} indices, du plus pertinent au moins pertinent. Chaque i doit être présent dans la liste.
 Aucune phrase hors JSON, aucun champ supplémentaire. Si rien ne convient : {"picks":[]}.`,
-          },
-          { role: "user", content: buildRankingPrompt(query, semantic, rerankPool) },
-        ],
-        { maxTokens: 420, temperature: 0.08, timeoutMs: 28_000 },
-      );
-    } catch {
-      rankRaw = "";
+            },
+            { role: "user", content: buildRankingPrompt(query, semantic, rerankPool) },
+          ],
+          { maxTokens: 420, temperature: 0.08, timeoutMs: 28_000 },
+        );
+      } catch {
+        rankRaw = "";
+      }
     }
     const parsed = rankRaw ? parseAiPicks(rankRaw, rerankPool.length) : null;
     const aiRanked = (parsed?.picks ?? [])
@@ -887,45 +567,42 @@ Aucune phrase hors JSON, aucun champ supplémentaire. Si rien ne convient : {"pi
     if (body.mode === "text" && userContent) {
       try {
         const { block: turnBlock, primarySlug } = buildConcordanceTurnContext(history);
-        let semantic: SemanticIntent | null = null;
-        try {
-          semantic = await extractSemanticIntent(
-            openai,
-            userContent,
-            turnBlock.trim() ? turnBlock : null,
-          );
-        } catch {
-          semantic = null;
-        }
-        if (semantic) semantic = resolveSemanticWithFollowUp(semantic, primarySlug);
-
-        const candidates = await fetchSemanticCandidates(admin, userContent, semantic);
+        const hybridChat = await resolveHybridRetrieval(admin, openai, userContent, {
+          primarySlug,
+          turnContextBlock: turnBlock.trim() ? turnBlock : null,
+          profile: "chat",
+        });
+        const semantic = hybridChat.semantic;
+        const candidates = hybridChat.candidates;
+        const skipRankingLlm = hybridChat.skipRankingLlm;
         sermonContextCount = candidates.length;
 
         if (candidates.length > 0) {
           const rerankPool = candidates.slice(0, 260);
-          let rankRaw: string;
-          try {
-            rankRaw = await runStructuredJsonCompletion(
-              openai,
-              [
-                {
-                  role: "system",
-                  content: `${MOBOKO_SOURCE_ONLY_LOCK}
+          let rankRaw = "";
+          if (!skipRankingLlm) {
+            try {
+              rankRaw = await runStructuredJsonCompletion(
+                openai,
+                [
+                  {
+                    role: "system",
+                    content: `${MOBOKO_SOURCE_ONLY_LOCK}
 
 Tu classes des extraits de sermons par pertinence sémantique (liste numérotée fournie).
 Privilégie l’adéquation au type de passage et à l’intent ; refuse les extraits qui ne font que partager un mot avec la question sans correspondre au besoin réel.
 Réponds UNIQUEMENT par un JSON valide : {"picks":[{"i":1},...]}
 Maximum ${CHAT_RANK_MAX_PICKS} indices, du plus pertinent au moins pertinent. Chaque i doit être présent dans la liste.
 Aucune phrase hors JSON, aucun champ supplémentaire. Si rien ne convient : {"picks":[]}.`,
-                },
-                { role: "user", content: buildRankingPrompt(userContent, semantic, rerankPool) },
-              ],
-              { maxTokens: 420, temperature: 0.08, timeoutMs: 28_000 },
-            );
-          } catch (rankErrOn) {
-            console.error("[api/ai/chat] classement_ia", rankErrOn);
-            rankRaw = "";
+                  },
+                  { role: "user", content: buildRankingPrompt(userContent, semantic, rerankPool) },
+                ],
+                { maxTokens: 420, temperature: 0.08, timeoutMs: 28_000 },
+              );
+            } catch (rankErrOn) {
+              console.error("[api/ai/chat] classement_ia", rankErrOn);
+              rankRaw = "";
+            }
           }
 
           const parsed = rankRaw ? parseAiPicks(rankRaw, rerankPool.length) : null;
