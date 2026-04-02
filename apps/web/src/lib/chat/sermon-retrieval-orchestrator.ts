@@ -5,7 +5,6 @@ import type { DbMessageRow } from "@/lib/ai/moboko-chat";
 import type { LastRetrievalState, RetrievalOrchestratorResult, RetrievalScope } from "@/lib/chat/sermon-retrieval-types";
 import {
   tool_continue_last_scope,
-  tool_find_sermon_by_title_or_slug,
   tool_get_neighbor_paragraphs,
   tool_get_paragraph_by_number,
   tool_search_paragraphs_global,
@@ -96,6 +95,26 @@ function asOptionalInt(x: unknown): number | undefined {
   return n == null ? undefined : n;
 }
 
+function hasExplicitContinuityCue(query: string): boolean {
+  const q = query.toLowerCase();
+  return (
+    q.includes("dans ce sermon") ||
+    q.includes("ce sermon") ||
+    q.includes("tu as bien le sermon") ||
+    q.includes("encore") ||
+    q.includes("plus loin") ||
+    q.includes("ce passage") ||
+    q.includes("cette fille")
+  );
+}
+
+/** Titre de sermon explicitement cité après « dans le sermon … », pour résolution canonique (cas 1). */
+function extractExplicitSermonTitleFromUserQuery(query: string): string | null {
+  const m = query.match(/dans le sermon\s+(.+?)\s*,\s*/i);
+  const g = m?.[1]?.trim();
+  return g && g.length >= 12 ? g : null;
+}
+
 function toolArgsErrorResult(pageSize: number): RetrievalOrchestratorResult {
   return {
     ok: true,
@@ -132,6 +151,7 @@ export async function runSermonRetrievalOrchestrator(opts: {
 }): Promise<{ result: RetrievalOrchestratorResult; usedTool: string; lastState: LastRetrievalState | null }> {
   const q = opts.userQuery.trim();
   const last = extractLastRetrievalState(opts.history);
+  const activeSermonSlug = last?.scope.kind === "sermon" ? last.scope.sermon_slug : null;
   // Intention produit: éviter tout pré-routage local du chat avant l’IA.
   // Le modèle reçoit la requête brute et décide seul des tool-calls.
 
@@ -139,13 +159,12 @@ export async function runSermonRetrievalOrchestrator(opts: {
     "Tu es l’orchestrateur retrieval de Moboko.",
     "Tu ne réponds jamais par du texte libre. Tu DOIS appeler exactement 1 outil.",
     "Tu dois appeler un outil qui retourne des résultats exploitables par l'application.",
-    "N'appelle PAS find_sermon_by_title_or_slug seul: utilise search_paragraphs_in_sermon ou get_paragraph_by_number (avec sermon_slug ou title_or_slug).",
+    "N'appelle jamais un outil de simple résolution: appelle directement un outil qui retourne des paragraphes.",
     "N'utilise le dernier scope (sermon précédent) QUE si l'utilisateur exprime explicitement une continuité (ex: 'encore', 'plus loin', 'dans ce sermon', 'cette fille', 'ce passage').",
     "Si la nouvelle requête introduit un autre sujet sans continuité explicite, utilise search_paragraphs_global.",
     "Si l'utilisateur demande 'juste le paragraphe' ou une seule occurrence, utilise page_size=1 (et continue_last_scope si c'est une continuation).",
     "Le résultat de l’outil est directement renvoyé à l’application (JSON).",
     "Choisis l’outil le plus adapté :",
-    "- find_sermon_by_title_or_slug: pour identifier un sermon visé",
     "- get_paragraph_by_number: si l’utilisateur demande un § précis dans un sermon",
     "- search_paragraphs_in_sermon: si l’utilisateur veut chercher dans un sermon donné",
     "- search_paragraphs_global: recherche bibliothèque",
@@ -155,19 +174,6 @@ export async function runSermonRetrievalOrchestrator(opts: {
   ].join("\n");
 
   const tools = [
-    {
-      type: "function" as const,
-      function: {
-        name: "find_sermon_by_title_or_slug",
-        description: "Résout un sermon publié à partir d’un titre ou d’un slug.",
-        parameters: {
-          type: "object",
-          additionalProperties: false,
-          properties: { title_or_slug: { type: "string" } },
-          required: ["title_or_slug"],
-        },
-      },
-    },
     {
       type: "function" as const,
       function: {
@@ -324,40 +330,64 @@ export async function runSermonRetrievalOrchestrator(opts: {
   let toolResult: unknown;
   try {
     switch (name) {
-      case "find_sermon_by_title_or_slug": {
-        const title_or_slug = asTrimmedString(parsedArgs.title_or_slug);
-        if (!title_or_slug) {
-          return { result: toolArgsErrorResult(opts.pageSize), usedTool: "tool_args_invalid:find_sermon_by_title_or_slug", lastState: last };
-        }
-        toolResult = await tool_find_sermon_by_title_or_slug(opts.admin, { title_or_slug });
-        break;
-      }
       case "get_paragraph_by_number": {
         const sermon_slug = asTrimmedString(parsedArgs.sermon_slug);
         const title_or_slug = asTrimmedString(parsedArgs.title_or_slug);
         const paragraph_number = asInt(parsedArgs.paragraph_number);
         const queryArg = asTrimmedString(parsedArgs.query) ?? q;
         const conversation_id = asTrimmedString(parsedArgs.conversation_id) ?? opts.conversationId;
-        if ((!sermon_slug && !title_or_slug) || paragraph_number == null || !conversation_id) {
+        const stickySermonSlug =
+          last?.scope.kind === "sermon" &&
+          hasExplicitContinuityCue(q)
+            ? last.scope.sermon_slug
+            : undefined;
+        if ((!sermon_slug && !title_or_slug && !stickySermonSlug) || paragraph_number == null || !conversation_id) {
           return { result: toolArgsErrorResult(opts.pageSize), usedTool: "tool_args_invalid:get_paragraph_by_number", lastState: last };
         }
+        const lockActive = Boolean(stickySermonSlug);
+        if (lockActive) {
+          console.log("[chat-orchestrator] continuity_scope_reuse", {
+            active_sermon_slug: stickySermonSlug,
+            lock_sermon_slug: true,
+            user_query: q,
+            ignored_title_or_slug: title_or_slug ?? null,
+            ignored_model_sermon_slug: sermon_slug ?? null,
+          });
+        }
         toolResult = await tool_get_paragraph_by_number(opts.admin, {
-          sermon_slug: sermon_slug ?? undefined,
-          title_or_slug: title_or_slug ?? undefined,
+          sermon_slug: stickySermonSlug ?? sermon_slug ?? undefined,
+          title_or_slug: lockActive ? undefined : title_or_slug ?? undefined,
           paragraph_number,
           query: queryArg,
           conversation_id,
+          lock_sermon_slug: lockActive,
+          preferred_sermon_slug: lockActive ? undefined : activeSermonSlug,
         });
         break;
       }
       case "search_paragraphs_in_sermon": {
-        const sermon_slug = asTrimmedString(parsedArgs.sermon_slug);
-        const title_or_slug = asTrimmedString(parsedArgs.title_or_slug);
+        let sermon_slug = asTrimmedString(parsedArgs.sermon_slug);
+        let title_or_slug = asTrimmedString(parsedArgs.title_or_slug);
         const queryStr = asTrimmedString(parsedArgs.query);
         const conversation_id = asTrimmedString(parsedArgs.conversation_id) ?? opts.conversationId;
+        const extractedSermonTitle = extractExplicitSermonTitleFromUserQuery(q);
+        if (extractedSermonTitle && (!title_or_slug || extractedSermonTitle.length > title_or_slug.length)) {
+          title_or_slug = extractedSermonTitle;
+        }
+        const forceActiveScope =
+          Boolean(activeSermonSlug) && hasExplicitContinuityCue(q) && !extractedSermonTitle;
+        if (forceActiveScope) {
+          sermon_slug = activeSermonSlug;
+          title_or_slug = null;
+          console.log("[chat-orchestrator] continuity_force_sermon_scope_search", {
+            active_sermon_slug: activeSermonSlug,
+            user_query: q,
+          });
+        }
         if ((!sermon_slug && !title_or_slug) || !queryStr || !conversation_id) {
           return { result: toolArgsErrorResult(opts.pageSize), usedTool: "tool_args_invalid:search_paragraphs_in_sermon", lastState: last };
         }
+        const preferredForSearch = extractedSermonTitle ? undefined : activeSermonSlug ?? undefined;
         toolResult = await tool_search_paragraphs_in_sermon(opts.admin, {
           sermon_slug: sermon_slug ?? undefined,
           title_or_slug: title_or_slug ?? undefined,
@@ -365,6 +395,8 @@ export async function runSermonRetrievalOrchestrator(opts: {
           offset: asOptionalInt(parsedArgs.offset),
           page_size: asOptionalInt(parsedArgs.page_size),
           conversation_id,
+          lock_sermon_slug: forceActiveScope,
+          preferred_sermon_slug: forceActiveScope ? undefined : preferredForSearch,
         });
         break;
       }
