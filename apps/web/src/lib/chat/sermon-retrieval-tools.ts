@@ -5,6 +5,43 @@ import { fetchSingleParagraphCandidate, resolveUniqueSermonSlugByTitle } from "@
 import { fetchSermonSearchCandidates } from "@/lib/sermons/ai-sermon-search-server";
 import type { SermonParagraphCandidate } from "@/lib/sermons/ai-sermon-search-server";
 
+function normLoose(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenize(s: string): string[] {
+  return normLoose(s)
+    .split(" ")
+    .map((x) => x.trim())
+    .filter((x) => x.length >= 4);
+}
+
+function rankCandidatesByQuery(candidates: SermonParagraphCandidate[], query: string): SermonParagraphCandidate[] {
+  const qTokens = tokenize(query).slice(0, 10);
+  if (qTokens.length === 0) return candidates;
+  const scored = candidates.map((c) => {
+    const text = normLoose(c.paragraph_text);
+    const title = normLoose(c.title);
+    let score = 0;
+    for (const tk of qTokens) {
+      if (text.includes(tk)) score += 3;
+      if (title.includes(tk)) score += 1;
+    }
+    // Favor phrase proximity for longer clues.
+    const qNorm = normLoose(query);
+    if (qNorm.length >= 20 && text.includes(qNorm)) score += 12;
+    return { c, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored.map((x) => x.c);
+}
+
 function toHitBase(c: SermonParagraphCandidate) {
   return {
     slug: c.slug,
@@ -69,18 +106,49 @@ async function resolveSermonSlugFromHint(
   titleOrSlug: string,
   queryHint: string,
 ): Promise<string | null> {
+  const hint = titleOrSlug.trim();
+  if (!hint) return null;
+
   const resolved = await tool_find_sermon_by_title_or_slug(admin, { title_or_slug: titleOrSlug });
   if (resolved.scope.kind === "sermon") return resolved.scope.sermon_slug;
 
-  // Fallback: infère le sermon dominant depuis les résultats globaux.
+  // Fallback 1: score lexical sur titres (évite de tomber sur un sermon hors cible).
+  const tokens = tokenize(hint).slice(0, 8);
+  if (tokens.length > 0) {
+    const orExpr = tokens.map((t) => `title.ilike.%${t}%`).join(",");
+    const { data: rows } = await admin
+      .from("sermons")
+      .select("slug, title")
+      .eq("is_published", true)
+      .or(orExpr)
+      .limit(120);
+    if ((rows ?? []).length > 0) {
+      let best: { slug: string; score: number } | null = null;
+      const normHint = normLoose(hint);
+      for (const row of rows ?? []) {
+        const slug = String((row as { slug?: string }).slug ?? "").trim();
+        const title = String((row as { title?: string }).title ?? "").trim();
+        if (!slug || !title) continue;
+        const nt = normLoose(title);
+        let score = 0;
+        if (nt.includes(normHint)) score += 20;
+        for (const tk of tokens) {
+          if (nt.includes(tk)) score += 3;
+          if (slug.includes(tk)) score += 1;
+        }
+        if (!best || score > best.score) best = { slug, score };
+      }
+      if (best && best.score > 0) return best.slug;
+    }
+  }
+
+  // Fallback 2: infère le sermon dominant depuis les résultats globaux.
   const seeded = await fetchSermonSearchCandidates(admin, `${titleOrSlug} ${queryHint}`.trim());
   if (seeded.length === 0) return null;
   const bySlug = new Map<string, number>();
-  for (const c of seeded.slice(0, 80)) {
-    bySlug.set(c.slug, (bySlug.get(c.slug) ?? 0) + 1);
-  }
+  for (const c of seeded.slice(0, 120)) bySlug.set(c.slug, (bySlug.get(c.slug) ?? 0) + 1);
   const top = [...bySlug.entries()].sort((a, b) => b[1] - a[1])[0];
-  return top?.[0] ?? null;
+  return top ? top[0] : null;
 }
 
 export async function tool_find_sermon_by_title_or_slug(
@@ -164,7 +232,7 @@ export async function tool_get_paragraph_by_number(
   }
   const c = await fetchSingleParagraphCandidate(admin, slug, n);
   if (!c) {
-    const fallbackSlug = await resolveSermonSlugFromHint(admin, titleOrSlug || slug, query);
+    const fallbackSlug = titleOrSlug ? await resolveSermonSlugFromHint(admin, titleOrSlug, query) : null;
     if (fallbackSlug && fallbackSlug !== slug) {
       const c2 = await fetchSingleParagraphCandidate(admin, fallbackSlug, n);
       if (c2) {
@@ -209,7 +277,8 @@ export async function tool_search_paragraphs_global(
     return { ok: true, results: [], total_count: 0, scope, next_offset: null, offset: Math.max(0, offset), page_size: Math.max(1, Math.min(50, pageSize)), has_more: false };
   }
   const candidates = await fetchSermonSearchCandidates(admin, query);
-  const pg = pageSlice(candidates, offset, pageSize);
+  const ranked = rankCandidatesByQuery(candidates, query);
+  const pg = pageSlice(ranked, offset, pageSize);
   const results = await Promise.all(
     pg.page.map((c) =>
       enrichWithNeighbors(admin, c, {
@@ -255,11 +324,8 @@ export async function tool_search_paragraphs_in_sermon(
     return { ok: true, results: [], total_count: 0, scope, next_offset: null, offset: Math.max(0, offset), page_size: Math.max(1, Math.min(50, pageSize)), has_more: false };
   }
   const candidates = (await fetchSermonSearchCandidates(admin, query)).filter((c) => c.slug === slug);
-  if (candidates.length === 0) {
-    // Si le scope choisi n'a rien, on élargit pour éviter un faux négatif bloquant.
-    return tool_search_paragraphs_global(admin, { query, offset, page_size: pageSize, conversation_id: conversationId });
-  }
-  const pg = pageSlice(candidates, offset, pageSize);
+  const ranked = rankCandidatesByQuery(candidates, query);
+  const pg = pageSlice(ranked, offset, pageSize);
   const results = await Promise.all(
     pg.page.map((c) =>
       enrichWithNeighbors(admin, c, {

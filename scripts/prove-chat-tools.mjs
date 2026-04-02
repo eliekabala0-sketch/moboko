@@ -86,6 +86,8 @@ const QUERIES = [
   "dans le sermon La Brèche entre les sept âges de l’Eglise et les sept Sceaux, trouve où il explique Apocalypse 10, juste dans ce sermon",
   "tu as bien le sermon la breche, ouvre le paragraphe 42",
   "renvoie les paragraphes où il parle de l’ange puissant d’apocalypse 10",
+  "Fr Branham parle d'une femme qui s'est retrouvé là où on gardait les fous alors qu'elle n'était pas folle et désirait que le prophète prie pour elle",
+  "je vais juste le paragraphe où le Prophète parle de cette fille",
 ];
 
 async function main() {

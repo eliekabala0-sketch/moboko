@@ -132,28 +132,17 @@ export async function runSermonRetrievalOrchestrator(opts: {
 }): Promise<{ result: RetrievalOrchestratorResult; usedTool: string; lastState: LastRetrievalState | null }> {
   const q = opts.userQuery.trim();
   const last = extractLastRetrievalState(opts.history);
-  const lastHint =
-    last != null
-      ? JSON.stringify(
-          {
-            last_query: last.query,
-            last_scope: last.scope,
-            last_offset: last.offset,
-            last_page_size: last.page_size,
-            last_total_count: last.total_count,
-            last_has_more: last.has_more,
-            last_next_offset: last.next_offset,
-          },
-          null,
-          0,
-        )
-      : "";
+  // Intention produit: éviter tout pré-routage local du chat avant l’IA.
+  // Le modèle reçoit la requête brute et décide seul des tool-calls.
 
   const system = [
     "Tu es l’orchestrateur retrieval de Moboko.",
     "Tu ne réponds jamais par du texte libre. Tu DOIS appeler exactement 1 outil.",
     "Tu dois appeler un outil qui retourne des résultats exploitables par l'application.",
     "N'appelle PAS find_sermon_by_title_or_slug seul: utilise search_paragraphs_in_sermon ou get_paragraph_by_number (avec sermon_slug ou title_or_slug).",
+    "N'utilise le dernier scope (sermon précédent) QUE si l'utilisateur exprime explicitement une continuité (ex: 'encore', 'plus loin', 'dans ce sermon', 'cette fille', 'ce passage').",
+    "Si la nouvelle requête introduit un autre sujet sans continuité explicite, utilise search_paragraphs_global.",
+    "Si l'utilisateur demande 'juste le paragraphe' ou une seule occurrence, utilise page_size=1 (et continue_last_scope si c'est une continuation).",
     "Le résultat de l’outil est directement renvoyé à l’application (JSON).",
     "Choisis l’outil le plus adapté :",
     "- find_sermon_by_title_or_slug: pour identifier un sermon visé",
@@ -162,7 +151,7 @@ export async function runSermonRetrievalOrchestrator(opts: {
     "- search_paragraphs_global: recherche bibliothèque",
     "- continue_last_scope: si l’utilisateur demande une suite (encore, plus loin, etc.) et qu’un dernier scope existe",
     "",
-    lastHint ? `Contexte immédiat (dernier scope): ${lastHint}` : "Contexte immédiat: aucun dernier scope.",
+    "Contexte immédiat: aucun pré-routage local imposé.",
   ].join("\n");
 
   const tools = [
@@ -278,6 +267,7 @@ export async function runSermonRetrievalOrchestrator(opts: {
     { role: "user", content: q },
   ];
   console.log("[chat-orchestrator] openai_request_query", { query: q });
+  console.log("[chat-orchestrator] openai_request_messages", JSON.stringify(messages));
 
   const completion = await opts.openai.chat.completions.create({
     model: process.env.OPENAI_CHAT_MODEL?.trim() || "gpt-4o-mini",
