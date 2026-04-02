@@ -64,6 +64,25 @@ function pageSlice<T>(items: T[], offset: number, pageSize: number) {
   };
 }
 
+async function resolveSermonSlugFromHint(
+  admin: SupabaseClient,
+  titleOrSlug: string,
+  queryHint: string,
+): Promise<string | null> {
+  const resolved = await tool_find_sermon_by_title_or_slug(admin, { title_or_slug: titleOrSlug });
+  if (resolved.scope.kind === "sermon") return resolved.scope.sermon_slug;
+
+  // Fallback: infère le sermon dominant depuis les résultats globaux.
+  const seeded = await fetchSermonSearchCandidates(admin, `${titleOrSlug} ${queryHint}`.trim());
+  if (seeded.length === 0) return null;
+  const bySlug = new Map<string, number>();
+  for (const c of seeded.slice(0, 80)) {
+    bySlug.set(c.slug, (bySlug.get(c.slug) ?? 0) + 1);
+  }
+  const top = [...bySlug.entries()].sort((a, b) => b[1] - a[1])[0];
+  return top?.[0] ?? null;
+}
+
 export async function tool_find_sermon_by_title_or_slug(
   admin: SupabaseClient,
   args: { title_or_slug: string },
@@ -108,17 +127,35 @@ export async function tool_find_sermon_by_title_or_slug(
     return { ok: true, scope: { kind: "sermon", sermon_slug: resolved }, sermon_title: row?.title ?? null, sermon_slug: resolved };
   }
 
+  // 4) Fallback pragmatique : premier sermon publié correspondant au fragment de titre.
+  const { data: byTitle } = await admin
+    .from("sermons")
+    .select("slug, title")
+    .eq("is_published", true)
+    .ilike("title", `%${raw}%`)
+    .order("preached_on", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (byTitle?.slug && byTitle?.title) {
+    return { ok: true, scope: { kind: "sermon", sermon_slug: byTitle.slug }, sermon_title: byTitle.title, sermon_slug: byTitle.slug };
+  }
+
   return { ok: true, scope: { kind: "library" }, sermon_title: null, sermon_slug: null };
 }
 
 export async function tool_get_paragraph_by_number(
   admin: SupabaseClient,
-  args: { sermon_slug: string; paragraph_number: number; query: string; offset?: number; page_size?: number; conversation_id: string },
+  args: { sermon_slug?: string; title_or_slug?: string; paragraph_number: number; query: string; offset?: number; page_size?: number; conversation_id: string },
 ): Promise<RetrievalOrchestratorResult> {
-  const slug = (args.sermon_slug ?? "").trim();
+  let slug = (args.sermon_slug ?? "").trim();
+  const titleOrSlug = (args.title_or_slug ?? "").trim();
   const n = Math.floor(Number(args.paragraph_number));
   const query = (args.query ?? "").trim();
   const conversationId = (args.conversation_id ?? "").trim();
+  if (!slug && titleOrSlug) {
+    const resolvedSlug = await resolveSermonSlugFromHint(admin, titleOrSlug, query);
+    if (resolvedSlug) slug = resolvedSlug;
+  }
   const scope: RetrievalScope = slug ? { kind: "sermon", sermon_slug: slug } : { kind: "library" };
   const pageSize = args.page_size ?? 20;
   const offset = args.offset ?? 0;
@@ -127,6 +164,23 @@ export async function tool_get_paragraph_by_number(
   }
   const c = await fetchSingleParagraphCandidate(admin, slug, n);
   if (!c) {
+    const fallbackSlug = await resolveSermonSlugFromHint(admin, titleOrSlug || slug, query);
+    if (fallbackSlug && fallbackSlug !== slug) {
+      const c2 = await fetchSingleParagraphCandidate(admin, fallbackSlug, n);
+      if (c2) {
+        const hit2 = await enrichWithNeighbors(admin, c2, {
+          source: "chat",
+          query,
+          conversationId,
+          offset: 0,
+          pageSize: 1,
+          nextOffset: null,
+          hasMore: false,
+          totalCount: 1,
+        });
+        return { ok: true, results: [hit2], total_count: 1, scope: { kind: "sermon", sermon_slug: fallbackSlug }, next_offset: null, offset: 0, page_size: 1, has_more: false };
+      }
+    }
     return { ok: true, results: [], total_count: 0, scope, next_offset: null, offset: Math.max(0, offset), page_size: Math.max(1, Math.min(50, pageSize)), has_more: false };
   }
   const hit = await enrichWithNeighbors(admin, c, {
@@ -184,18 +238,27 @@ export async function tool_search_paragraphs_global(
 
 export async function tool_search_paragraphs_in_sermon(
   admin: SupabaseClient,
-  args: { sermon_slug: string; query: string; offset?: number; page_size?: number; conversation_id: string },
+  args: { sermon_slug?: string; title_or_slug?: string; query: string; offset?: number; page_size?: number; conversation_id: string },
 ): Promise<RetrievalOrchestratorResult> {
-  const slug = (args.sermon_slug ?? "").trim();
+  let slug = (args.sermon_slug ?? "").trim();
+  const titleOrSlug = (args.title_or_slug ?? "").trim();
   const query = (args.query ?? "").trim();
   const offset = args.offset ?? 0;
   const pageSize = args.page_size ?? 20;
   const conversationId = (args.conversation_id ?? "").trim();
+  if (!slug && titleOrSlug) {
+    const resolvedSlug = await resolveSermonSlugFromHint(admin, titleOrSlug, query);
+    if (resolvedSlug) slug = resolvedSlug;
+  }
   const scope: RetrievalScope = slug ? { kind: "sermon", sermon_slug: slug } : { kind: "library" };
   if (!slug || !query) {
     return { ok: true, results: [], total_count: 0, scope, next_offset: null, offset: Math.max(0, offset), page_size: Math.max(1, Math.min(50, pageSize)), has_more: false };
   }
   const candidates = (await fetchSermonSearchCandidates(admin, query)).filter((c) => c.slug === slug);
+  if (candidates.length === 0) {
+    // Si le scope choisi n'a rien, on élargit pour éviter un faux négatif bloquant.
+    return tool_search_paragraphs_global(admin, { query, offset, page_size: pageSize, conversation_id: conversationId });
+  }
   const pg = pageSlice(candidates, offset, pageSize);
   const results = await Promise.all(
     pg.page.map((c) =>

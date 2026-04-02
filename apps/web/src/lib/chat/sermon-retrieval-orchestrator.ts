@@ -152,6 +152,8 @@ export async function runSermonRetrievalOrchestrator(opts: {
   const system = [
     "Tu es l’orchestrateur retrieval de Moboko.",
     "Tu ne réponds jamais par du texte libre. Tu DOIS appeler exactement 1 outil.",
+    "Tu dois appeler un outil qui retourne des résultats exploitables par l'application.",
+    "N'appelle PAS find_sermon_by_title_or_slug seul: utilise search_paragraphs_in_sermon ou get_paragraph_by_number (avec sermon_slug ou title_or_slug).",
     "Le résultat de l’outil est directement renvoyé à l’application (JSON).",
     "Choisis l’outil le plus adapté :",
     "- find_sermon_by_title_or_slug: pour identifier un sermon visé",
@@ -187,11 +189,12 @@ export async function runSermonRetrievalOrchestrator(opts: {
           additionalProperties: false,
           properties: {
             sermon_slug: { type: "string" },
+            title_or_slug: { type: "string" },
             paragraph_number: { type: "integer" },
             query: { type: "string" },
             conversation_id: { type: "string" },
           },
-          required: ["sermon_slug", "paragraph_number", "query", "conversation_id"],
+          required: ["paragraph_number", "query", "conversation_id"],
         },
       },
     },
@@ -205,12 +208,13 @@ export async function runSermonRetrievalOrchestrator(opts: {
           additionalProperties: false,
           properties: {
             sermon_slug: { type: "string" },
+            title_or_slug: { type: "string" },
             query: { type: "string" },
             offset: { type: "integer" },
             page_size: { type: "integer" },
             conversation_id: { type: "string" },
           },
-          required: ["sermon_slug", "query", "conversation_id"],
+          required: ["query", "conversation_id"],
         },
       },
     },
@@ -273,18 +277,21 @@ export async function runSermonRetrievalOrchestrator(opts: {
     { role: "system", content: system },
     { role: "user", content: q },
   ];
+  console.log("[chat-orchestrator] openai_request_query", { query: q });
 
   const completion = await opts.openai.chat.completions.create({
     model: process.env.OPENAI_CHAT_MODEL?.trim() || "gpt-4o-mini",
     messages,
     tools,
-    tool_choice: "auto",
+    tool_choice: "required",
     temperature: 0.1,
     max_tokens: 700,
   });
+  console.log("[chat-orchestrator] openai_completion_raw", JSON.stringify(completion));
 
   const msg = completion.choices[0]?.message;
   const toolCalls = msg?.tool_calls ?? [];
+  console.log("[chat-orchestrator] tool_call_presence", { hasToolCall: toolCalls.length > 0, count: toolCalls.length });
   const first = toolCalls[0];
   if (!first || first.type !== "function") {
     return { result: toolArgsErrorResult(opts.pageSize), usedTool: "tool_call_missing", lastState: last };
@@ -299,6 +306,7 @@ export async function runSermonRetrievalOrchestrator(opts: {
   } catch {
     parsedArgs = {};
   }
+  console.log("[chat-orchestrator] tool_call_selected", { tool: name, rawArgs, parsedArgs });
 
   // Injecte les paramètres “obligatoires” utiles quand l’outil les supporte.
   if (name === "search_paragraphs_global" || name === "search_paragraphs_in_sermon") {
@@ -336,14 +344,16 @@ export async function runSermonRetrievalOrchestrator(opts: {
       }
       case "get_paragraph_by_number": {
         const sermon_slug = asTrimmedString(parsedArgs.sermon_slug);
+        const title_or_slug = asTrimmedString(parsedArgs.title_or_slug);
         const paragraph_number = asInt(parsedArgs.paragraph_number);
         const queryArg = asTrimmedString(parsedArgs.query) ?? q;
         const conversation_id = asTrimmedString(parsedArgs.conversation_id) ?? opts.conversationId;
-        if (!sermon_slug || paragraph_number == null || !conversation_id) {
+        if ((!sermon_slug && !title_or_slug) || paragraph_number == null || !conversation_id) {
           return { result: toolArgsErrorResult(opts.pageSize), usedTool: "tool_args_invalid:get_paragraph_by_number", lastState: last };
         }
         toolResult = await tool_get_paragraph_by_number(opts.admin, {
-          sermon_slug,
+          sermon_slug: sermon_slug ?? undefined,
+          title_or_slug: title_or_slug ?? undefined,
           paragraph_number,
           query: queryArg,
           conversation_id,
@@ -352,13 +362,15 @@ export async function runSermonRetrievalOrchestrator(opts: {
       }
       case "search_paragraphs_in_sermon": {
         const sermon_slug = asTrimmedString(parsedArgs.sermon_slug);
+        const title_or_slug = asTrimmedString(parsedArgs.title_or_slug);
         const queryStr = asTrimmedString(parsedArgs.query);
         const conversation_id = asTrimmedString(parsedArgs.conversation_id) ?? opts.conversationId;
-        if (!sermon_slug || !queryStr || !conversation_id) {
+        if ((!sermon_slug && !title_or_slug) || !queryStr || !conversation_id) {
           return { result: toolArgsErrorResult(opts.pageSize), usedTool: "tool_args_invalid:search_paragraphs_in_sermon", lastState: last };
         }
         toolResult = await tool_search_paragraphs_in_sermon(opts.admin, {
-          sermon_slug,
+          sermon_slug: sermon_slug ?? undefined,
+          title_or_slug: title_or_slug ?? undefined,
           query: queryStr,
           offset: asOptionalInt(parsedArgs.offset),
           page_size: asOptionalInt(parsedArgs.page_size),
@@ -420,6 +432,17 @@ export async function runSermonRetrievalOrchestrator(opts: {
       lastState: last,
     };
   }
+  console.log("[chat-orchestrator] tool_result", {
+    tool: name,
+    resultSummary: isRecord(toolResult)
+      ? {
+          ok: toolResult.ok,
+          total_count: toolResult.total_count,
+          has_results: Array.isArray(toolResult.results) && toolResult.results.length > 0,
+          first_result: Array.isArray(toolResult.results) && toolResult.results.length > 0 ? toolResult.results[0] : null,
+        }
+      : toolResult,
+  });
 
   // Si l’outil ne renvoie pas déjà le format attendu, on convertit en réponse vide.
   const normalized: RetrievalOrchestratorResult = isRetrievalOrchestratorResult(toolResult)
