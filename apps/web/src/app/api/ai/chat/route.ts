@@ -3,20 +3,14 @@ import {
   getOpenAIClient,
   historyToOpenAIMessages,
   runChatCompletion,
-  runStructuredJsonCompletion,
   transcribeAudio,
   type DbMessageRow,
 } from "@/lib/ai/moboko-chat";
-import {
-  clipForPrompt,
-  fetchSermonSearchCandidates,
-  type SermonParagraphCandidate,
-} from "@/lib/sermons/ai-sermon-search-server";
-import { resolveHybridRetrieval } from "@/lib/sermons/retrieval-resolve";
-import type { SemanticIntent } from "@/lib/sermons/semantic-intent";
-import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
+import { fetchSermonSearchCandidates } from "@/lib/sermons/ai-sermon-search-server";
 import { getUserFromApiRequest } from "@/lib/supabase/api-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
+import { buildRetrievalMetadata, runSermonRetrievalOrchestrator } from "@/lib/chat/sermon-retrieval-orchestrator";
+import { tool_continue_last_scope } from "@/lib/chat/sermon-retrieval-tools";
 import {
   ALL_PUBLIC_APP_SETTING_KEYS,
   parseAppSettingScalar,
@@ -83,161 +77,7 @@ function pathBelongsToUser(path: string, userId: string) {
   return path.startsWith(`${userId}/`);
 }
 
-type AiPick = { i?: number };
-
 const EMPTY_CONCORDANCE_MESSAGE = "Aucun paragraphe exact trouvé pour cette recherche.";
-
-const MOBOKO_SOURCE_ONLY_LOCK = `Règles Moboko (impératif) :
-- Moboko ne doit jamais utiliser des connaissances générales.
-- Moboko ne répond que par des passages présents dans la base.
-- Si aucun passage n’est trouvé dans les extraits fournis, Moboko ne répond pas à l’utilisateur : produis uniquement le JSON demandé sans autre texte, par ex. {"picks":[]}.`;
-
-const CHAT_RANK_MAX_PICKS = 10;
-
-function parseAiPicks(raw: string, n: number, maxPicks = CHAT_RANK_MAX_PICKS): { picks: AiPick[] } | null {
-  let data: unknown;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (!data || typeof data !== "object") return null;
-  const o = data as Record<string, unknown>;
-  const arr = o.picks;
-  if (!Array.isArray(arr)) return { picks: [] };
-  const picks: AiPick[] = [];
-  const used = new Set<number>();
-  for (const item of arr) {
-    if (typeof item !== "object" || item === null) continue;
-    const p = item as Record<string, unknown>;
-    const i = typeof p.i === "number" && Number.isInteger(p.i) ? p.i : null;
-    if (i === null || i < 1 || i > n || used.has(i)) continue;
-    used.add(i);
-    picks.push({ i });
-    if (picks.length >= maxPicks) break;
-  }
-  return { picks };
-}
-
-type TurnCtx = { block: string; primarySlug: string | null };
-
-function buildConcordanceTurnContext(rows: DbMessageRow[]): TurnCtx {
-  const textUsers = rows.filter((r) => r.role === "user" && r.kind === "text" && (r.content ?? "").trim());
-  const recentUsers = textUsers.slice(-2);
-  let lastResults: unknown[] | null = null;
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const r = rows[i];
-    if (r.role !== "assistant") continue;
-    const meta =
-      r.metadata && typeof r.metadata === "object" && !Array.isArray(r.metadata)
-        ? (r.metadata as Record<string, unknown>)
-        : null;
-    if (meta?.moboko_kind === "sermon_concordance" && Array.isArray(meta.results)) {
-      lastResults = meta.results as unknown[];
-      break;
-    }
-  }
-  const lines: string[] = [];
-  if (recentUsers.length) {
-    lines.push("Contexte immédiat — tours utilisateur récents :");
-    for (const u of recentUsers) {
-      lines.push(`- ${(u.content ?? "").trim().slice(0, 520)}`);
-    }
-  }
-  let primarySlug: string | null = null;
-  if (lastResults?.length) {
-    const slugs = new Set<string>();
-    const titles = new Set<string>();
-    for (const item of lastResults) {
-      if (!item || typeof item !== "object") continue;
-      const o = item as Record<string, unknown>;
-      if (typeof o.slug === "string" && o.slug.trim()) slugs.add(o.slug.trim());
-      if (typeof o.title === "string" && o.title.trim()) titles.add(o.title.trim());
-    }
-    if (slugs.size === 1) primarySlug = [...slugs][0];
-    lines.push("Contexte immédiat — dernière concordance affichée (même fil de recherche) :");
-    lines.push(`- slugs : ${[...slugs].slice(0, 6).join(", ") || "(inconnu)"}`);
-    lines.push(`- titres : ${[...titles].slice(0, 4).join(" · ") || "(inconnu)"}`);
-    if (slugs.size > 1) {
-      lines.push(
-        "- Plusieurs sermons : en cas de suite vague (« encore », « plus loin »), ne fixe restrict_sermon_slug que si l’utilisateur précise lequel ou qu’un seul slug est visé.",
-      );
-    }
-  }
-  if (lines.length === 0) return { block: "", primarySlug: null };
-  return { block: lines.join("\n"), primarySlug };
-}
-
-async function enrichRankedWithNeighbors(
-  admin: NonNullable<ReturnType<typeof createSupabaseServiceClient>>,
-  ranked: { c: SermonParagraphCandidate }[],
-  query: string,
-  offset: number,
-  pageSize: number,
-  conversationId: string,
-) {
-  const end = Math.min(ranked.length, offset + pageSize);
-  const page = ranked.slice(offset, end);
-  const results: Record<string, unknown>[] = [];
-  const hasMore = end < ranked.length;
-  for (const { c } of page) {
-    const n = await fetchNeighborParagraphs(admin, c.slug, c.paragraph_number);
-    results.push({
-      slug: c.slug,
-      title: c.title,
-      location: c.location ?? null,
-      date:
-        (c.preached_on && String(c.preached_on).trim()) ||
-        (c.year != null ? String(c.year) : null),
-      paragraph_number: c.paragraph_number,
-      paragraph_text: c.paragraph_text,
-      prev_paragraph_number: n.prev_paragraph_number,
-      prev_paragraph_text: n.prev_paragraph_text,
-      next_paragraph_number: n.next_paragraph_number,
-      next_paragraph_text: n.next_paragraph_text,
-      _source: "chat",
-      _query: query,
-      _conversation_id: conversationId,
-      _offset: offset,
-      _page_size: pageSize,
-      _next_offset: hasMore ? end : null,
-      _has_more: hasMore,
-      _total_count: ranked.length,
-    });
-  }
-  return { results, totalCount: ranked.length, hasMore, nextOffset: hasMore ? end : null };
-}
-
-function buildRankingPrompt(query: string, semantic: SemanticIntent | null, candidates: SermonParagraphCandidate[]) {
-  const lines = candidates.map((c, idx) => {
-    const y = c.year != null ? String(c.year) : "";
-    return `${idx + 1}\t${c.slug}\t${c.title}\t${y}\t${c.paragraph_number}\t${clipForPrompt(c.paragraph_text, 320)}`;
-  });
-  const pb = semantic?.passage_brief?.trim();
-  const types = (semantic?.content_types ?? []).join(", ");
-  const scope =
-    semantic?.restrict_sermon_slug ? `Périmètre sermon (slug): ${semantic.restrict_sermon_slug}` : "Périmètre: bibliothèque";
-  const routing =
-    semantic != null
-      ? `Plan retrieval: ${semantic.routing_source} (confiance ${semantic.confidence})`
-      : "";
-  return [
-    `Question: ${query}`,
-    routing,
-    `Intent: ${semantic?.intent || "(non déterminé)"}`,
-    `Mode: ${semantic?.search_mode || "theme_search"}`,
-    `Besoin: ${semantic?.user_need || "orientation"}`,
-    `Types de passage visés: ${types || "(non précisé)"}`,
-    scope,
-    pb ? `Critères sémantiques (respecter : garder l’adéquation réelle, écarter les matches lexicaux trompeurs) : ${pb}` : "",
-    `Concepts: ${(semantic?.concepts ?? []).join(", ") || "(aucun)"}`,
-    "",
-    "Extraits candidats (n° | slug | titre | année | paragraphe | extrait):",
-    lines.join("\n"),
-  ]
-    .filter((line) => line !== "")
-    .join("\n");
-}
 
 async function maybeInjectSermonContext(
   completionMessages: ChatCompletionMessageParam[],
@@ -249,9 +89,14 @@ async function maybeInjectSermonContext(
   const candidates = await fetchSermonSearchCandidates(admin, q);
   if (candidates.length === 0) return 0;
   const top = candidates.slice(0, 4);
+  const clip = (text: string, max = 420) => {
+    const t = text.replace(/\s+/g, " ").trim();
+    if (t.length <= max) return t;
+    return `${t.slice(0, max - 1)}…`;
+  };
   const lines = top.map((c, idx) => {
     const y = c.year != null ? ` (${c.year})` : "";
-    return `${idx + 1}. ${c.title}${y} §${c.paragraph_number}\n${clipForPrompt(c.paragraph_text, 420)}`;
+    return `${idx + 1}. ${c.title}${y} §${c.paragraph_number}\n${clip(c.paragraph_text, 420)}`;
   });
   completionMessages.push({
     role: "system",
@@ -313,81 +158,54 @@ export async function POST(request: Request) {
     }
     const offset = Math.max(0, Math.floor(body.offset ?? 0));
     const pageSize = Math.max(1, Math.min(50, Math.floor(body.pageSize ?? CONCORDANCE_PAGE_SIZE)));
-
-    const hybridPage = await resolveHybridRetrieval(admin, openai, query, {
-      primarySlug: null,
-      turnContextBlock: null,
-      profile: "chat",
-    });
-    const semantic = hybridPage.semantic;
-    const candidates = hybridPage.candidates;
-    const skipRankingLlm = hybridPage.skipRankingLlm;
-    if (candidates.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        results: [],
-        total_count: 0,
-        offset,
-        page_size: pageSize,
-        has_more: false,
-        next_offset: null,
-        message: EMPTY_CONCORDANCE_MESSAGE,
-      });
-    }
-
-    const rerankPool = candidates.slice(0, 260);
-    let rankRaw = "";
-    if (!skipRankingLlm) {
-      try {
-        rankRaw = await runStructuredJsonCompletion(
-          openai,
-          [
-            {
-              role: "system",
-              content: `${MOBOKO_SOURCE_ONLY_LOCK}
-
-Tu classes des extraits de sermons par pertinence sémantique (liste numérotée fournie).
-Privilégie l’adéquation au type de passage et à l’intent ; refuse les extraits qui ne font que partager un mot avec la question sans correspondre au besoin réel.
-Réponds UNIQUEMENT par un JSON valide : {"picks":[{"i":1},...]}
-Maximum ${CHAT_RANK_MAX_PICKS} indices, du plus pertinent au moins pertinent. Chaque i doit être présent dans la liste.
-Aucune phrase hors JSON, aucun champ supplémentaire. Si rien ne convient : {"picks":[]}.`,
-            },
-            { role: "user", content: buildRankingPrompt(query, semantic, rerankPool) },
-          ],
-          { maxTokens: 420, temperature: 0.08, timeoutMs: 28_000 },
-        );
-      } catch {
-        rankRaw = "";
+    // Pagination : pas besoin de rappeler l’IA ; on réutilise le dernier scope enregistré.
+    const { data: recent } = await admin
+      .from("messages")
+      .select("role, metadata")
+      .eq("conversation_id", body.conversationId)
+      .order("created_at", { ascending: false })
+      .limit(30);
+    let lastScope: unknown = null;
+    let lastQuery: string | null = null;
+    for (const r of recent ?? []) {
+      const row = r as { role?: string; metadata?: unknown };
+      if (row.role !== "assistant") continue;
+      const meta =
+        row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+          ? (row.metadata as Record<string, unknown>)
+          : null;
+      const last =
+        meta?.moboko_retrieval && typeof meta.moboko_retrieval === "object" && !Array.isArray(meta.moboko_retrieval)
+          ? (meta.moboko_retrieval as Record<string, unknown>)
+          : null;
+      if (!last) continue;
+      const q = typeof last.query === "string" ? last.query.trim() : "";
+      const sc = last.scope;
+      if (q) {
+        lastQuery = q;
+        lastScope = sc;
+        break;
       }
     }
-    const parsed = rankRaw ? parseAiPicks(rankRaw, rerankPool.length) : null;
-    const aiRanked = (parsed?.picks ?? [])
-      .filter((p): p is { i: number } => typeof p.i === "number")
-      .map((p) => rerankPool[p.i - 1])
-      .filter((c): c is SermonParagraphCandidate => Boolean(c));
-    const aiKeys = new Set(aiRanked.map((c) => `${c.slug}:${c.paragraph_number}`));
-    const ordered = [...aiRanked, ...candidates.filter((c) => !aiKeys.has(`${c.slug}:${c.paragraph_number}`))];
-    const ranked = ordered
-      .map((c) => ({ c }))
-      .filter((x): x is { c: SermonParagraphCandidate } => Boolean(x.c));
-
-    const page = await enrichRankedWithNeighbors(
-      admin,
-      ranked,
-      query,
-      offset,
-      pageSize,
-      body.conversationId,
-    );
+    const result = await tool_continue_last_scope(admin, {
+      last_scope:
+        lastScope && typeof lastScope === "object" && !Array.isArray(lastScope) && (lastScope as Record<string, unknown>).kind === "sermon"
+          ? { kind: "sermon", sermon_slug: String((lastScope as Record<string, unknown>).sermon_slug ?? "").trim() }
+          : { kind: "library" },
+      last_query: lastQuery ?? query,
+      next_offset: offset,
+      page_size: pageSize,
+      conversation_id: body.conversationId,
+    });
     return NextResponse.json({
       ok: true,
-      results: page.results,
-      total_count: page.totalCount,
-      offset,
-      page_size: pageSize,
-      has_more: page.hasMore,
-      next_offset: page.nextOffset,
-      message: page.totalCount === 0 ? EMPTY_CONCORDANCE_MESSAGE : null,
+      results: result.results,
+      total_count: result.total_count,
+      offset: result.offset,
+      page_size: result.page_size,
+      has_more: result.has_more,
+      next_offset: result.next_offset,
+      message: result.total_count === 0 ? EMPTY_CONCORDANCE_MESSAGE : null,
     });
   }
 
@@ -566,97 +384,43 @@ Aucune phrase hors JSON, aucun champ supplémentaire. Si rien ne convient : {"pi
 
     if (body.mode === "text" && userContent) {
       try {
-        const { block: turnBlock, primarySlug } = buildConcordanceTurnContext(history);
-        const hybridChat = await resolveHybridRetrieval(admin, openai, userContent, {
-          primarySlug,
-          turnContextBlock: turnBlock.trim() ? turnBlock : null,
-          profile: "chat",
+        const orch = await runSermonRetrievalOrchestrator({
+          openai,
+          admin,
+          conversationId: body.conversationId,
+          userQuery: userContent,
+          history,
+          pageSize: CONCORDANCE_PAGE_SIZE,
         });
-        const semantic = hybridChat.semantic;
-        const candidates = hybridChat.candidates;
-        const skipRankingLlm = hybridChat.skipRankingLlm;
-        sermonContextCount = candidates.length;
-
-        if (candidates.length > 0) {
-          const rerankPool = candidates.slice(0, 260);
-          let rankRaw = "";
-          if (!skipRankingLlm) {
-            try {
-              rankRaw = await runStructuredJsonCompletion(
-                openai,
-                [
-                  {
-                    role: "system",
-                    content: `${MOBOKO_SOURCE_ONLY_LOCK}
-
-Tu classes des extraits de sermons par pertinence sémantique (liste numérotée fournie).
-Privilégie l’adéquation au type de passage et à l’intent ; refuse les extraits qui ne font que partager un mot avec la question sans correspondre au besoin réel.
-Réponds UNIQUEMENT par un JSON valide : {"picks":[{"i":1},...]}
-Maximum ${CHAT_RANK_MAX_PICKS} indices, du plus pertinent au moins pertinent. Chaque i doit être présent dans la liste.
-Aucune phrase hors JSON, aucun champ supplémentaire. Si rien ne convient : {"picks":[]}.`,
-                  },
-                  { role: "user", content: buildRankingPrompt(userContent, semantic, rerankPool) },
-                ],
-                { maxTokens: 420, temperature: 0.08, timeoutMs: 28_000 },
-              );
-            } catch (rankErrOn) {
-              console.error("[api/ai/chat] classement_ia", rankErrOn);
-              rankRaw = "";
-            }
-          }
-
-          const parsed = rankRaw ? parseAiPicks(rankRaw, rerankPool.length) : null;
-          const pickList = parsed?.picks ?? [];
-          const aiRanked = pickList
-            .filter((p): p is { i: number } => typeof p.i === "number")
-            .map((p) => rerankPool[p.i - 1])
-            .filter((c): c is SermonParagraphCandidate => Boolean(c));
-          const aiKeys = new Set(aiRanked.map((c) => `${c.slug}:${c.paragraph_number}`));
-          const ordered = [...aiRanked, ...candidates.filter((c) => !aiKeys.has(`${c.slug}:${c.paragraph_number}`))];
-          const ranked = ordered
-            .map((c) => ({ c }))
-            .filter((x): x is { c: SermonParagraphCandidate } => Boolean(x.c));
-
-          if (ranked.length === 0) {
-            assistantText = EMPTY_CONCORDANCE_MESSAGE;
-            metaAssistant = {
-              model: getChatModel(),
-              sermon_context_count: sermonContextCount,
-              moboko_kind: "sermon_concordance_empty",
-            };
-          } else {
-            const page = await enrichRankedWithNeighbors(
-              admin,
-              ranked,
-              userContent,
-              0,
-              CONCORDANCE_PAGE_SIZE,
-              body.conversationId,
-            );
-            assistantText = "";
-            metaAssistant = {
-              model: getChatModel(),
-              sermon_context_count: sermonContextCount,
-              moboko_kind: "sermon_concordance",
-              results: page.results,
-              total_count: page.totalCount,
-              offset: 0,
-              page_size: CONCORDANCE_PAGE_SIZE,
-              has_more: page.hasMore,
-              next_offset: page.nextOffset,
-            };
-          }
-        } else {
+        sermonContextCount = orch.result.total_count;
+        if (orch.result.results.length === 0) {
           assistantText = EMPTY_CONCORDANCE_MESSAGE;
           metaAssistant = {
             model: getChatModel(),
-            sermon_context_count: 0,
+            sermon_context_count: sermonContextCount,
             moboko_kind: "sermon_concordance_empty",
+            moboko_retrieval: {
+              query: userContent,
+              scope: orch.result.scope,
+              offset: orch.result.offset,
+              page_size: orch.result.page_size,
+              total_count: orch.result.total_count,
+              has_more: orch.result.has_more,
+              next_offset: orch.result.next_offset,
+              tool: orch.usedTool,
+            },
+          };
+        } else {
+          assistantText = "";
+          metaAssistant = {
+            model: getChatModel(),
+            sermon_context_count: sermonContextCount,
+            ...buildRetrievalMetadata(orch.result, userContent),
+            moboko_tool: orch.usedTool,
           };
         }
       } catch (e) {
-        console.error("[api/ai/chat] pipeline_sermons", e);
-        sermonContextCount = 0;
+        console.error("[api/ai/chat] orchestrator", e);
         assistantText = EMPTY_CONCORDANCE_MESSAGE;
         metaAssistant = {
           model: getChatModel(),
