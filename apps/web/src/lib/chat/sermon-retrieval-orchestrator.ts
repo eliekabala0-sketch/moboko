@@ -75,10 +75,38 @@ export function buildRetrievalMetadata(result: RetrievalOrchestratorResult, quer
   } as const;
 }
 
-type ToolHandler = (args: unknown) => Promise<unknown>;
-
 function isRecord(x: unknown): x is Record<string, unknown> {
   return Boolean(x) && typeof x === "object" && !Array.isArray(x);
+}
+
+function asTrimmedString(x: unknown): string | null {
+  if (typeof x !== "string") return null;
+  const t = x.trim();
+  return t ? t : null;
+}
+
+function asInt(x: unknown): number | null {
+  if (typeof x !== "number" || !Number.isFinite(x)) return null;
+  if (!Number.isInteger(x)) return null;
+  return x;
+}
+
+function asOptionalInt(x: unknown): number | undefined {
+  const n = asInt(x);
+  return n == null ? undefined : n;
+}
+
+function toolArgsErrorResult(pageSize: number): RetrievalOrchestratorResult {
+  return {
+    ok: true,
+    results: [],
+    total_count: 0,
+    scope: { kind: "library" },
+    next_offset: null,
+    offset: 0,
+    page_size: pageSize,
+    has_more: false,
+  };
 }
 
 function isRetrievalOrchestratorResult(x: unknown): x is RetrievalOrchestratorResult {
@@ -241,15 +269,6 @@ export async function runSermonRetrievalOrchestrator(opts: {
     },
   ];
 
-  const handlers: Record<string, ToolHandler> = {
-    find_sermon_by_title_or_slug: (args) => tool_find_sermon_by_title_or_slug(opts.admin, args),
-    get_paragraph_by_number: (args) => tool_get_paragraph_by_number(opts.admin, args),
-    search_paragraphs_in_sermon: (args) => tool_search_paragraphs_in_sermon(opts.admin, args),
-    search_paragraphs_global: (args) => tool_search_paragraphs_global(opts.admin, args),
-    get_neighbor_paragraphs: (args) => tool_get_neighbor_paragraphs(opts.admin, args),
-    continue_last_scope: (args) => tool_continue_last_scope(opts.admin, args),
-  };
-
   const messages: ChatCompletionMessageParam[] = [
     { role: "system", content: system },
     { role: "user", content: q },
@@ -317,18 +336,110 @@ export async function runSermonRetrievalOrchestrator(opts: {
     parsedArgs.conversation_id = opts.conversationId;
   }
 
-  const handler = handlers[name];
-  if (!handler) {
-    const result = await tool_search_paragraphs_global(opts.admin, {
-      query: q,
-      offset: 0,
-      page_size: opts.pageSize,
-      conversation_id: opts.conversationId,
-    });
-    return { result, usedTool: "search_paragraphs_global(fallback_unknown_tool)", lastState: last };
+  let toolResult: unknown;
+  try {
+    switch (name) {
+      case "find_sermon_by_title_or_slug": {
+        const title_or_slug = asTrimmedString(parsedArgs.title_or_slug);
+        if (!title_or_slug) {
+          return { result: toolArgsErrorResult(opts.pageSize), usedTool: "tool_args_invalid:find_sermon_by_title_or_slug", lastState: last };
+        }
+        toolResult = await tool_find_sermon_by_title_or_slug(opts.admin, { title_or_slug });
+        break;
+      }
+      case "get_paragraph_by_number": {
+        const sermon_slug = asTrimmedString(parsedArgs.sermon_slug);
+        const paragraph_number = asInt(parsedArgs.paragraph_number);
+        const queryArg = asTrimmedString(parsedArgs.query) ?? q;
+        const conversation_id = asTrimmedString(parsedArgs.conversation_id) ?? opts.conversationId;
+        if (!sermon_slug || paragraph_number == null || !conversation_id) {
+          return { result: toolArgsErrorResult(opts.pageSize), usedTool: "tool_args_invalid:get_paragraph_by_number", lastState: last };
+        }
+        toolResult = await tool_get_paragraph_by_number(opts.admin, {
+          sermon_slug,
+          paragraph_number,
+          query: queryArg,
+          conversation_id,
+        });
+        break;
+      }
+      case "search_paragraphs_in_sermon": {
+        const sermon_slug = asTrimmedString(parsedArgs.sermon_slug);
+        const queryStr = asTrimmedString(parsedArgs.query);
+        const conversation_id = asTrimmedString(parsedArgs.conversation_id) ?? opts.conversationId;
+        if (!sermon_slug || !queryStr || !conversation_id) {
+          return { result: toolArgsErrorResult(opts.pageSize), usedTool: "tool_args_invalid:search_paragraphs_in_sermon", lastState: last };
+        }
+        toolResult = await tool_search_paragraphs_in_sermon(opts.admin, {
+          sermon_slug,
+          query: queryStr,
+          offset: asOptionalInt(parsedArgs.offset),
+          page_size: asOptionalInt(parsedArgs.page_size),
+          conversation_id,
+        });
+        break;
+      }
+      case "search_paragraphs_global": {
+        const queryStr = asTrimmedString(parsedArgs.query);
+        const conversation_id = asTrimmedString(parsedArgs.conversation_id) ?? opts.conversationId;
+        if (!queryStr || !conversation_id) {
+          return { result: toolArgsErrorResult(opts.pageSize), usedTool: "tool_args_invalid:search_paragraphs_global", lastState: last };
+        }
+        toolResult = await tool_search_paragraphs_global(opts.admin, {
+          query: queryStr,
+          offset: asOptionalInt(parsedArgs.offset),
+          page_size: asOptionalInt(parsedArgs.page_size),
+          conversation_id,
+        });
+        break;
+      }
+      case "get_neighbor_paragraphs": {
+        const sermon_slug = asTrimmedString(parsedArgs.sermon_slug);
+        const paragraph_number = asInt(parsedArgs.paragraph_number);
+        if (!sermon_slug || paragraph_number == null) {
+          return { result: toolArgsErrorResult(opts.pageSize), usedTool: "tool_args_invalid:get_neighbor_paragraphs", lastState: last };
+        }
+        toolResult = await tool_get_neighbor_paragraphs(opts.admin, { sermon_slug, paragraph_number });
+        break;
+      }
+      case "continue_last_scope": {
+        const last_scope = parsedArgs.last_scope;
+        const last_query = asTrimmedString(parsedArgs.last_query);
+        const next_offset = asInt(parsedArgs.next_offset);
+        const conversation_id = asTrimmedString(parsedArgs.conversation_id) ?? opts.conversationId;
+        if (!last_query || next_offset == null || !conversation_id) {
+          return { result: toolArgsErrorResult(opts.pageSize), usedTool: "tool_args_invalid:continue_last_scope", lastState: last };
+        }
+        toolResult = await tool_continue_last_scope(opts.admin, {
+          last_scope: isRecord(last_scope) && last_scope.kind === "sermon"
+            ? { kind: "sermon", sermon_slug: String(last_scope.sermon_slug ?? "").trim() }
+            : { kind: "library" },
+          last_query,
+          next_offset,
+          page_size: asOptionalInt(parsedArgs.page_size),
+          conversation_id,
+        });
+        break;
+      }
+      default: {
+        const result = await tool_search_paragraphs_global(opts.admin, {
+          query: q,
+          offset: 0,
+          page_size: opts.pageSize,
+          conversation_id: opts.conversationId,
+        });
+        return { result, usedTool: "search_paragraphs_global(fallback_unknown_tool)", lastState: last };
+      }
+    }
+  } catch {
+    // Erreur contrôlée côté orchestrateur.
+    return {
+      result: toolArgsErrorResult(opts.pageSize),
+      usedTool: `tool_dispatch_error:${name}`,
+      lastState: last,
+    };
   }
 
-  const toolResult = await handler(parsedArgs);
   // Si l’outil ne renvoie pas déjà le format attendu, on convertit en réponse vide.
   const normalized: RetrievalOrchestratorResult = isRetrievalOrchestratorResult(toolResult)
     ? toolResult
