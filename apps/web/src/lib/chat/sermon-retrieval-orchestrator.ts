@@ -287,14 +287,7 @@ export async function runSermonRetrievalOrchestrator(opts: {
   const toolCalls = msg?.tool_calls ?? [];
   const first = toolCalls[0];
   if (!first || first.type !== "function") {
-    // Fallback déterministe : global search (sans texte assistant).
-    const result = await tool_search_paragraphs_global(opts.admin, {
-      query: q,
-      offset: 0,
-      page_size: opts.pageSize,
-      conversation_id: opts.conversationId,
-    });
-    return { result, usedTool: "search_paragraphs_global(fallback)", lastState: last };
+    return { result: toolArgsErrorResult(opts.pageSize), usedTool: "tool_call_missing", lastState: last };
   }
 
   const name = first.function.name;
@@ -319,13 +312,7 @@ export async function runSermonRetrievalOrchestrator(opts: {
   // “continue_last_scope” nécessite le dernier état, sinon on dégrade vers recherche globale.
   if (name === "continue_last_scope") {
     if (!last || last.next_offset == null) {
-      const result = await tool_search_paragraphs_global(opts.admin, {
-        query: q,
-        offset: 0,
-        page_size: opts.pageSize,
-        conversation_id: opts.conversationId,
-      });
-      return { result, usedTool: "search_paragraphs_global(fallback_no_last_scope)", lastState: last };
+      return { result: toolArgsErrorResult(opts.pageSize), usedTool: "tool_args_invalid:continue_last_scope_missing_last_scope", lastState: last };
     }
     parsedArgs.last_scope = parsedArgs.last_scope ?? last.scope;
     parsedArgs.last_query = typeof parsedArgs.last_query === "string" ? parsedArgs.last_query : last.query;
@@ -422,13 +409,7 @@ export async function runSermonRetrievalOrchestrator(opts: {
         break;
       }
       default: {
-        const result = await tool_search_paragraphs_global(opts.admin, {
-          query: q,
-          offset: 0,
-          page_size: opts.pageSize,
-          conversation_id: opts.conversationId,
-        });
-        return { result, usedTool: "search_paragraphs_global(fallback_unknown_tool)", lastState: last };
+        return { result: toolArgsErrorResult(opts.pageSize), usedTool: "tool_unknown", lastState: last };
       }
     }
   } catch {
