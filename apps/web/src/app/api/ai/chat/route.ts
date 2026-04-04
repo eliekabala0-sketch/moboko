@@ -7,9 +7,9 @@ import {
   type DbMessageRow,
 } from "@/lib/ai/moboko-chat";
 import { fetchSermonSearchCandidates } from "@/lib/sermons/ai-sermon-search-server";
+import { coerceConcordanceHits } from "@/lib/sermons/concordance-types";
 import { getUserFromApiRequest } from "@/lib/supabase/api-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
-import { buildRetrievalMetadata, runSermonRetrievalOrchestrator } from "@/lib/chat/sermon-retrieval-orchestrator";
 import { tool_continue_last_scope } from "@/lib/chat/sermon-retrieval-tools";
 import {
   ALL_PUBLIC_APP_SETTING_KEYS,
@@ -78,6 +78,54 @@ function pathBelongsToUser(path: string, userId: string) {
 }
 
 const EMPTY_CONCORDANCE_MESSAGE = "Aucun paragraphe exact trouvé pour cette recherche.";
+
+const OPENAI_CHAT_WORKFLOW_ID = "wf_69d102003c8c8190bad519a82daabdb20e38556cea1016db";
+const OPENAI_RESPONSES_TEXT_MODEL = "gpt-4.1";
+
+function isRecord(x: unknown): x is Record<string, unknown> {
+  return Boolean(x) && typeof x === "object" && !Array.isArray(x);
+}
+
+/** Agrège le texte utile depuis la réponse REST `/v1/responses` (output_text ou items output_text). */
+function extractResponsesOutputText(data: unknown): string {
+  if (!isRecord(data)) return "";
+  const direct = data.output_text;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  const output = data.output;
+  if (!Array.isArray(output)) return "";
+  const parts: string[] = [];
+  for (const item of output) {
+    if (!isRecord(item)) continue;
+    const content = item.content;
+    if (!Array.isArray(content)) continue;
+    for (const c of content) {
+      if (!isRecord(c)) continue;
+      if (c.type === "output_text" && typeof c.text === "string") parts.push(c.text);
+    }
+  }
+  return parts.join("\n").trim();
+}
+
+function stripMarkdownJsonFence(s: string): string {
+  let t = s.trim();
+  const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/im.exec(t);
+  if (fence?.[1]) t = fence[1].trim();
+  return t;
+}
+
+/** Extrait un tableau de hits depuis la sortie texte du workflow (JSON ou { results: [] }). */
+function tryParseWorkflowResultsArray(raw: string): unknown[] | null {
+  const t = stripMarkdownJsonFence(raw);
+  if (!t) return null;
+  try {
+    const v: unknown = JSON.parse(t);
+    if (Array.isArray(v)) return v;
+    if (isRecord(v) && Array.isArray(v.results)) return v.results;
+  } catch {
+    return null;
+  }
+  return null;
+}
 
 async function maybeInjectSermonContext(
   completionMessages: ChatCompletionMessageParam[],
@@ -383,47 +431,134 @@ export async function POST(request: Request) {
     };
 
     if (body.mode === "text" && userContent) {
+      const apiKey = process.env.OPENAI_API_KEY?.trim();
+      if (!apiKey) {
+        return NextResponse.json(
+          { error: "openai_non_configure", detail: "OPENAI_API_KEY manquante côté serveur." },
+          { status: 503 },
+        );
+      }
       try {
-        const orch = await runSermonRetrievalOrchestrator({
-          openai,
-          admin,
-          conversationId: body.conversationId,
-          userQuery: userContent,
-          history,
-          pageSize: CONCORDANCE_PAGE_SIZE,
+        const res = await fetch("https://api.openai.com/v1/responses", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: OPENAI_RESPONSES_TEXT_MODEL,
+            input: userContent,
+            workflow: OPENAI_CHAT_WORKFLOW_ID,
+          }),
         });
-        sermonContextCount = orch.result.total_count;
-        if (orch.result.results.length === 0) {
+        const data: unknown = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          console.error("[api/ai/chat] openai responses", res.status, data);
           assistantText = EMPTY_CONCORDANCE_MESSAGE;
           metaAssistant = {
-            model: getChatModel(),
-            sermon_context_count: sermonContextCount,
+            model: OPENAI_RESPONSES_TEXT_MODEL,
+            sermon_context_count: 0,
             moboko_kind: "sermon_concordance_empty",
             moboko_retrieval: {
               query: userContent,
-              scope: orch.result.scope,
-              offset: orch.result.offset,
-              page_size: orch.result.page_size,
-              total_count: orch.result.total_count,
-              has_more: orch.result.has_more,
-              next_offset: orch.result.next_offset,
-              tool: orch.usedTool,
+              scope: { kind: "library" },
+              offset: 0,
+              page_size: CONCORDANCE_PAGE_SIZE,
+              total_count: 0,
+              has_more: false,
+              next_offset: null,
             },
           };
         } else {
-          assistantText = "";
-          metaAssistant = {
-            model: getChatModel(),
-            sermon_context_count: sermonContextCount,
-            ...buildRetrievalMetadata(orch.result, userContent),
-            moboko_tool: orch.usedTool,
-          };
+          const outputText = extractResponsesOutputText(data);
+          if (!outputText) {
+            assistantText = EMPTY_CONCORDANCE_MESSAGE;
+            metaAssistant = {
+              model: OPENAI_RESPONSES_TEXT_MODEL,
+              sermon_context_count: 0,
+              moboko_kind: "sermon_concordance_empty",
+              moboko_retrieval: {
+                query: userContent,
+                scope: { kind: "library" },
+                offset: 0,
+                page_size: CONCORDANCE_PAGE_SIZE,
+                total_count: 0,
+                has_more: false,
+                next_offset: null,
+              },
+            };
+          } else {
+            const rawResults = tryParseWorkflowResultsArray(outputText);
+            const hits = rawResults ? coerceConcordanceHits(rawResults) : [];
+            if (hits.length === 0) {
+              assistantText = EMPTY_CONCORDANCE_MESSAGE;
+              metaAssistant = {
+                model: OPENAI_RESPONSES_TEXT_MODEL,
+                sermon_context_count: 0,
+                moboko_kind: "sermon_concordance_empty",
+                moboko_retrieval: {
+                  query: userContent,
+                  scope: { kind: "library" },
+                  offset: 0,
+                  page_size: CONCORDANCE_PAGE_SIZE,
+                  total_count: 0,
+                  has_more: false,
+                  next_offset: null,
+                },
+              };
+            } else {
+              const enriched = hits.map((h) => ({
+                ...h,
+                _source: "chat" as const,
+                _query: userContent,
+                _conversation_id: body.conversationId,
+              }));
+              sermonContextCount = enriched.length;
+              assistantText = "";
+              const total_count =
+                typeof enriched[0]?._total_count === "number" ? enriched[0]._total_count : enriched.length;
+              const offset = typeof enriched[0]?._offset === "number" ? enriched[0]._offset : 0;
+              const page_size =
+                typeof enriched[0]?._page_size === "number" ? enriched[0]._page_size : CONCORDANCE_PAGE_SIZE;
+              const has_more =
+                typeof enriched[0]?._has_more === "boolean" ? enriched[0]._has_more : false;
+              const next_offset =
+                enriched[0]?._next_offset === null || typeof enriched[0]?._next_offset === "number"
+                  ? enriched[0]._next_offset
+                  : null;
+              const scope =
+                enriched.length > 0 && enriched.every((h) => h.slug === enriched[0]!.slug)
+                  ? { kind: "sermon" as const, sermon_slug: enriched[0]!.slug }
+                  : { kind: "library" as const };
+              metaAssistant = {
+                model: OPENAI_RESPONSES_TEXT_MODEL,
+                sermon_context_count: sermonContextCount,
+                moboko_kind: "sermon_concordance",
+                results: enriched,
+                total_count,
+                offset,
+                page_size,
+                has_more,
+                next_offset,
+                moboko_retrieval: {
+                  query: userContent,
+                  scope,
+                  offset,
+                  page_size,
+                  total_count,
+                  has_more,
+                  next_offset,
+                },
+                moboko_tool: "openai_responses_workflow",
+              };
+            }
+          }
         }
       } catch (e) {
-        console.error("[api/ai/chat] orchestrator", e);
+        console.error("[api/ai/chat] openai workflow", e);
         assistantText = EMPTY_CONCORDANCE_MESSAGE;
         metaAssistant = {
-          model: getChatModel(),
+          model: OPENAI_RESPONSES_TEXT_MODEL,
           sermon_context_count: 0,
           moboko_kind: "sermon_concordance_empty",
         };
