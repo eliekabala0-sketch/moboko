@@ -10,6 +10,11 @@ import { fetchSermonSearchCandidates } from "@/lib/sermons/ai-sermon-search-serv
 import { coerceConcordanceHits } from "@/lib/sermons/concordance-types";
 import { getUserFromApiRequest } from "@/lib/supabase/api-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
+import {
+  openaiResponsesToolLoop,
+  SERMON_CHAT_TOOLS,
+} from "@/lib/chat/openai-responses-tool-loop";
+import { dispatchSermonToolByName } from "@/lib/chat/sermon-tools-handlers";
 import { tool_continue_last_scope } from "@/lib/chat/sermon-retrieval-tools";
 import {
   ALL_PUBLIC_APP_SETTING_KEYS,
@@ -84,26 +89,6 @@ const OPENAI_RESPONSES_TEXT_MODEL = "gpt-4.1";
 
 function isRecord(x: unknown): x is Record<string, unknown> {
   return Boolean(x) && typeof x === "object" && !Array.isArray(x);
-}
-
-/** Agrège le texte utile depuis la réponse REST `/v1/responses` (output_text ou items output_text). */
-function extractResponsesOutputText(data: unknown): string {
-  if (!isRecord(data)) return "";
-  const direct = data.output_text;
-  if (typeof direct === "string" && direct.trim()) return direct.trim();
-  const output = data.output;
-  if (!Array.isArray(output)) return "";
-  const parts: string[] = [];
-  for (const item of output) {
-    if (!isRecord(item)) continue;
-    const content = item.content;
-    if (!Array.isArray(content)) continue;
-    for (const c of content) {
-      if (!isRecord(c)) continue;
-      if (c.type === "output_text" && typeof c.text === "string") parts.push(c.text);
-    }
-  }
-  return parts.join("\n").trim();
 }
 
 function stripMarkdownJsonFence(s: string): string {
@@ -439,21 +424,21 @@ export async function POST(request: Request) {
         );
       }
       try {
-        const res = await fetch("https://api.openai.com/v1/responses", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
+        const loop = await openaiResponsesToolLoop({
+          apiKey,
+          model: OPENAI_RESPONSES_TEXT_MODEL,
+          workflow: OPENAI_CHAT_WORKFLOW_ID,
+          userMessage: userContent,
+          tools: SERMON_CHAT_TOOLS,
+          dispatch: async (name, argsJson) => {
+            const env = await dispatchSermonToolByName(admin, name, argsJson, {
+              conversationId: body.conversationId,
+            });
+            return JSON.stringify(env);
           },
-          body: JSON.stringify({
-            model: OPENAI_RESPONSES_TEXT_MODEL,
-            input: userContent,
-            workflow: OPENAI_CHAT_WORKFLOW_ID,
-          }),
         });
-        const data: unknown = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          console.error("[api/ai/chat] openai responses", res.status, data);
+        if (!loop.ok) {
+          console.error("[api/ai/chat] openai responses", loop.httpStatus, loop.lastResponse);
           assistantText = EMPTY_CONCORDANCE_MESSAGE;
           metaAssistant = {
             model: OPENAI_RESPONSES_TEXT_MODEL,
@@ -470,7 +455,7 @@ export async function POST(request: Request) {
             },
           };
         } else {
-          const outputText = extractResponsesOutputText(data);
+          const outputText = loop.outputText;
           if (!outputText) {
             assistantText = EMPTY_CONCORDANCE_MESSAGE;
             metaAssistant = {
@@ -549,7 +534,7 @@ export async function POST(request: Request) {
                   has_more,
                   next_offset,
                 },
-                moboko_tool: "openai_responses_workflow",
+                moboko_tool: "openai_responses_workflow_tools",
               };
             }
           }
