@@ -46,9 +46,11 @@ function KindPill({ kind, mine }: { kind: UiMessage["kind"]; mine: boolean }) {
 function Bubble({
   msg,
   mediaSrc,
+  conversationId,
 }: {
   msg: UiMessage;
   mediaSrc: string | null;
+  conversationId?: string | null;
 }) {
   const mine = msg.role === "user";
   const meta =
@@ -92,7 +94,7 @@ function Bubble({
             />
           ) : null}
           {hits && hits.length > 0 ? (
-            <ConcordanceHitsView hits={hits} />
+            <ConcordanceHitsView hits={hits} conversationId={conversationId} />
           ) : concordanceEmpty && msg.content ? (
             <p className="whitespace-pre-wrap text-[15px] leading-[1.65] tracking-[0.01em]">{msg.content}</p>
           ) : parsed ? (
@@ -215,7 +217,13 @@ function slugifyFromTitle(title: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-export function MessageList({ messages }: { messages: UiMessage[] }) {
+export function MessageList({
+  messages,
+  conversationId,
+}: {
+  messages: UiMessage[];
+  conversationId?: string | null;
+}) {
   const [urls, setUrls] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -250,7 +258,7 @@ export function MessageList({ messages }: { messages: UiMessage[] }) {
   return (
     <div className="flex flex-col gap-4 px-1 py-3 sm:px-2">
       {messages.map((m) => (
-        <Bubble key={m.id} msg={m} mediaSrc={urls[m.id] ?? null} />
+        <Bubble key={m.id} msg={m} mediaSrc={urls[m.id] ?? null} conversationId={conversationId} />
       ))}
     </div>
   );

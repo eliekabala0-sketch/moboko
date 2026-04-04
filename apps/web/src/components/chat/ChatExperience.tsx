@@ -410,7 +410,7 @@ export function ChatExperience({ userId }: Props) {
                 </p>
               </div>
             ) : (
-              <MessageList messages={messages} />
+              <MessageList messages={messages} conversationId={conversationId} />
             )}
           </div>
         </div>

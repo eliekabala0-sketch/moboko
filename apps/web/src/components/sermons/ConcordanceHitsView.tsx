@@ -14,9 +14,11 @@ function clipPreview(text: string, max = 140): string {
 type Props = {
   hits: ConcordanceHit[];
   pageSize?: number;
+  /** Id conversation (chat) : requis pour POST /api/ai/chat si les hits n’ont pas _conversation_id. */
+  conversationId?: string | null;
 };
 
-export function ConcordanceHitsView({ hits, pageSize = 20 }: Props) {
+export function ConcordanceHitsView({ hits, pageSize = 20, conversationId: conversationIdProp }: Props) {
   const [open, setOpen] = useState<string | null>(null);
   const [items, setItems] = useState<ConcordanceHit[]>(hits);
   const [visible, setVisible] = useState(pageSize);
@@ -55,14 +57,23 @@ export function ConcordanceHitsView({ hits, pageSize = 20 }: Props) {
       return;
     }
 
+    const endpoint = lastMeta?._source === "chat" ? "/api/ai/chat" : "/api/ai/sermons-search";
+    const fromProp = typeof conversationIdProp === "string" ? conversationIdProp.trim() : "";
+    const fromHit =
+      typeof lastMeta?._conversation_id === "string" ? lastMeta._conversation_id.trim() : "";
+    const conversationIdForChat = fromProp || fromHit || null;
+    if (endpoint === "/api/ai/chat" && !conversationIdForChat) {
+      setVisible((v) => v + pageSize);
+      return;
+    }
+
     setLoadingMore(true);
     try {
-      const endpoint = lastMeta?._source === "chat" ? "/api/ai/chat" : "/api/ai/sermons-search";
       const payload: Record<string, unknown> =
         endpoint === "/api/ai/chat"
           ? {
               mode: "concordance_page",
-              conversationId: lastMeta?._conversation_id,
+              conversationId: conversationIdForChat,
               query,
               offset: nextOffset,
               pageSize: serverPageSize,
