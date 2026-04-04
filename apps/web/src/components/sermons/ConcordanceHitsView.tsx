@@ -16,9 +16,16 @@ type Props = {
   pageSize?: number;
   /** Id conversation (chat) : requis pour POST /api/ai/chat si les hits n’ont pas _conversation_id. */
   conversationId?: string | null;
+  /** Texte optionnel renvoyé par l’agent (continuation.message). */
+  continuationMessage?: string | null;
 };
 
-export function ConcordanceHitsView({ hits, pageSize = 20, conversationId: conversationIdProp }: Props) {
+export function ConcordanceHitsView({
+  hits,
+  pageSize = 20,
+  conversationId: conversationIdProp,
+  continuationMessage,
+}: Props) {
   const [open, setOpen] = useState<string | null>(null);
   const [items, setItems] = useState<ConcordanceHit[]>(hits);
   const [visible, setVisible] = useState(pageSize);
@@ -129,10 +136,12 @@ export function ConcordanceHitsView({ hits, pageSize = 20, conversationId: conve
             {selected.date ? ` · ${selected.date}` : ""}
           </p>
 
-          {selected.prev_paragraph_text != null && selected.prev_paragraph_number != null ? (
+          {selected.prev_paragraph_text != null && selected.prev_paragraph_text.trim() !== "" ? (
             <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface)]/50 p-4">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-                Paragraphe §{selected.prev_paragraph_number} (précédent)
+                {selected.prev_paragraph_number != null && selected.prev_paragraph_number >= 1
+                  ? `Paragraphe §${selected.prev_paragraph_number} (précédent)`
+                  : "Paragraphe précédent"}
               </p>
               <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-[var(--muted)]">
                 {selected.prev_paragraph_text}
@@ -149,10 +158,12 @@ export function ConcordanceHitsView({ hits, pageSize = 20, conversationId: conve
             </p>
           </div>
 
-          {selected.next_paragraph_text != null && selected.next_paragraph_number != null ? (
+          {selected.next_paragraph_text != null && selected.next_paragraph_text.trim() !== "" ? (
             <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface)]/50 p-4">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-                Paragraphe §{selected.next_paragraph_number} (suivant)
+                {selected.next_paragraph_number != null && selected.next_paragraph_number >= 1
+                  ? `Paragraphe §${selected.next_paragraph_number} (suivant)`
+                  : "Paragraphe suivant"}
               </p>
               <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-[var(--muted)]">
                 {selected.next_paragraph_text}
@@ -184,6 +195,9 @@ export function ConcordanceHitsView({ hits, pageSize = 20, conversationId: conve
       <p className="text-[13px] font-semibold tracking-tight text-[var(--foreground)]">
         Résultats trouvés ({lastMeta?._total_count ?? allHits.length})
       </p>
+      {continuationMessage?.trim() ? (
+        <p className="text-xs leading-relaxed text-[var(--muted)]">{continuationMessage.trim()}</p>
+      ) : null}
       <ul className="space-y-2">
       {visibleHits.map((h) => {
         const k = hitKey(h);

@@ -94,7 +94,15 @@ function Bubble({
             />
           ) : null}
           {hits && hits.length > 0 ? (
-            <ConcordanceHitsView hits={hits} conversationId={conversationId} />
+            <ConcordanceHitsView
+              hits={hits}
+              conversationId={conversationId}
+              continuationMessage={
+                typeof meta?.moboko_continuation_message === "string"
+                  ? meta.moboko_continuation_message
+                  : null
+              }
+            />
           ) : concordanceEmpty && msg.content ? (
             <p className="whitespace-pre-wrap text-[15px] leading-[1.65] tracking-[0.01em]">{msg.content}</p>
           ) : parsed ? (

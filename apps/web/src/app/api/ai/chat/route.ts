@@ -7,7 +7,7 @@ import {
   type DbMessageRow,
 } from "@/lib/ai/moboko-chat";
 import { fetchSermonSearchCandidates } from "@/lib/sermons/ai-sermon-search-server";
-import { coerceConcordanceHits } from "@/lib/sermons/concordance-types";
+import { parseChatAgentConcordanceOutput } from "@/lib/sermons/concordance-types";
 import { getUserFromApiRequest } from "@/lib/supabase/api-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
 import {
@@ -86,31 +86,6 @@ const EMPTY_CONCORDANCE_MESSAGE = "Aucun paragraphe exact trouvé pour cette rec
 
 const OPENAI_CHAT_WORKFLOW_ID = "wf_69d102003c8c8190bad519a82daabdb20e38556cea1016db";
 const OPENAI_RESPONSES_TEXT_MODEL = "gpt-4.1";
-
-function isRecord(x: unknown): x is Record<string, unknown> {
-  return Boolean(x) && typeof x === "object" && !Array.isArray(x);
-}
-
-function stripMarkdownJsonFence(s: string): string {
-  let t = s.trim();
-  const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/im.exec(t);
-  if (fence?.[1]) t = fence[1].trim();
-  return t;
-}
-
-/** Extrait un tableau de hits depuis la sortie texte du workflow (JSON ou { results: [] }). */
-function tryParseWorkflowResultsArray(raw: string): unknown[] | null {
-  const t = stripMarkdownJsonFence(raw);
-  if (!t) return null;
-  try {
-    const v: unknown = JSON.parse(t);
-    if (Array.isArray(v)) return v;
-    if (isRecord(v) && Array.isArray(v.results)) return v.results;
-  } catch {
-    return null;
-  }
-  return null;
-}
 
 async function maybeInjectSermonContext(
   completionMessages: ChatCompletionMessageParam[],
@@ -473,9 +448,8 @@ export async function POST(request: Request) {
               },
             };
           } else {
-            const rawResults = tryParseWorkflowResultsArray(outputText);
-            const hits = rawResults ? coerceConcordanceHits(rawResults) : [];
-            if (hits.length === 0) {
+            const parsed = parseChatAgentConcordanceOutput(outputText);
+            if (!parsed || parsed.hits.length === 0) {
               assistantText = EMPTY_CONCORDANCE_MESSAGE;
               metaAssistant = {
                 model: OPENAI_RESPONSES_TEXT_MODEL,
@@ -492,6 +466,7 @@ export async function POST(request: Request) {
                 },
               };
             } else {
+              const { hits } = parsed;
               const enriched = hits.map((h) => ({
                 ...h,
                 _source: "chat" as const,
@@ -500,21 +475,16 @@ export async function POST(request: Request) {
               }));
               sermonContextCount = enriched.length;
               assistantText = "";
-              const total_count =
-                typeof enriched[0]?._total_count === "number" ? enriched[0]._total_count : enriched.length;
-              const offset = typeof enriched[0]?._offset === "number" ? enriched[0]._offset : 0;
-              const page_size =
-                typeof enriched[0]?._page_size === "number" ? enriched[0]._page_size : CONCORDANCE_PAGE_SIZE;
-              const has_more =
-                typeof enriched[0]?._has_more === "boolean" ? enriched[0]._has_more : false;
-              const next_offset =
-                enriched[0]?._next_offset === null || typeof enriched[0]?._next_offset === "number"
-                  ? enriched[0]._next_offset
-                  : null;
+              const total_count = parsed.total_count;
+              const offset = parsed.offset;
+              const page_size = parsed.page_size;
+              const has_more = parsed.has_more;
+              const next_offset = parsed.next_offset;
               const scope =
                 enriched.length > 0 && enriched.every((h) => h.slug === enriched[0]!.slug)
                   ? { kind: "sermon" as const, sermon_slug: enriched[0]!.slug }
                   : { kind: "library" as const };
+              const contMsg = parsed.continuation_message.trim();
               metaAssistant = {
                 model: OPENAI_RESPONSES_TEXT_MODEL,
                 sermon_context_count: sermonContextCount,
@@ -525,6 +495,7 @@ export async function POST(request: Request) {
                 page_size,
                 has_more,
                 next_offset,
+                ...(contMsg ? { moboko_continuation_message: contMsg } : {}),
                 moboko_retrieval: {
                   query: userContent,
                   scope,

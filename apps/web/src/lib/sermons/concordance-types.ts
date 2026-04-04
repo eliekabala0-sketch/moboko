@@ -27,6 +27,39 @@ export function hitKey(h: Pick<ConcordanceHit, "slug" | "paragraph_number">): st
   return `${h.slug}:${h.paragraph_number}`;
 }
 
+function isRecord(x: unknown): x is Record<string, unknown> {
+  return Boolean(x) && typeof x === "object" && !Array.isArray(x);
+}
+
+/** Retire une clôture Markdown ```json … ``` si présente. */
+export function stripMarkdownJsonFence(s: string): string {
+  let t = s.trim();
+  const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/im.exec(t);
+  if (fence?.[1]) t = fence[1].trim();
+  return t;
+}
+
+function agentPrevNextText(o: Record<string, unknown>): {
+  prevText: string | null;
+  nextText: string | null;
+} {
+  let prevText: string | null =
+    typeof o.prev_paragraph_text === "string" ? o.prev_paragraph_text : null;
+  let nextText: string | null =
+    typeof o.next_paragraph_text === "string" ? o.next_paragraph_text : null;
+  if (prevText == null && "prev_paragraph" in o) {
+    const p = o.prev_paragraph;
+    if (typeof p === "string" && p.trim()) prevText = p;
+    else if (p === null) prevText = null;
+  }
+  if (nextText == null && "next_paragraph" in o) {
+    const n = o.next_paragraph;
+    if (typeof n === "string" && n.trim()) nextText = n;
+    else if (n === null) nextText = null;
+  }
+  return { prevText, nextText };
+}
+
 /** Interprète le JSON `metadata.results` renvoyé par l’API (tolérant). */
 export function coerceConcordanceHits(raw: unknown): ConcordanceHit[] {
   if (!Array.isArray(raw)) return [];
@@ -47,6 +80,17 @@ export function coerceConcordanceHits(raw: unknown): ConcordanceHit[] {
     if (typeof dt === "string" && dt.trim()) date = dt.trim();
     else if (typeof po === "string" && po.trim()) date = po.trim();
     else if (typeof yr === "number" && Number.isFinite(yr)) date = String(yr);
+    const { prevText, nextText } = agentPrevNextText(o);
+    let prev_paragraph_number =
+      typeof o.prev_paragraph_number === "number" ? o.prev_paragraph_number : null;
+    let next_paragraph_number =
+      typeof o.next_paragraph_number === "number" ? o.next_paragraph_number : null;
+    if (prevText != null && prev_paragraph_number == null && paragraph_number > 1) {
+      prev_paragraph_number = paragraph_number - 1;
+    }
+    if (nextText != null && next_paragraph_number == null) {
+      next_paragraph_number = paragraph_number + 1;
+    }
     out.push({
       slug,
       title,
@@ -54,14 +98,10 @@ export function coerceConcordanceHits(raw: unknown): ConcordanceHit[] {
       date,
       paragraph_number,
       paragraph_text,
-      prev_paragraph_number:
-        typeof o.prev_paragraph_number === "number" ? o.prev_paragraph_number : null,
-      prev_paragraph_text:
-        typeof o.prev_paragraph_text === "string" ? o.prev_paragraph_text : null,
-      next_paragraph_number:
-        typeof o.next_paragraph_number === "number" ? o.next_paragraph_number : null,
-      next_paragraph_text:
-        typeof o.next_paragraph_text === "string" ? o.next_paragraph_text : null,
+      prev_paragraph_number,
+      prev_paragraph_text: prevText,
+      next_paragraph_number,
+      next_paragraph_text: nextText,
       _source:
         o._source === "chat" || o._source === "sermons-search"
           ? (o._source as "chat" | "sermons-search")
@@ -76,4 +116,96 @@ export function coerceConcordanceHits(raw: unknown): ConcordanceHit[] {
     });
   }
   return out;
+}
+
+/** Sortie structurée attendue de l’agent OpenAI (chat concordance). */
+export type ParsedChatAgentConcordance = {
+  hits: ConcordanceHit[];
+  total_count: number;
+  offset: number;
+  page_size: number;
+  has_more: boolean;
+  next_offset: number | null;
+  continuation_message: string;
+};
+
+/**
+ * Parse la sortie texte finale de l’agent : JSON nu, ```json```, tableau seul,
+ * ou objet { total_count, shown_count, results, continuation }.
+ */
+export function parseChatAgentConcordanceOutput(raw: string): ParsedChatAgentConcordance | null {
+  const t = stripMarkdownJsonFence(raw);
+  if (!t) return null;
+  let v: unknown;
+  try {
+    v = JSON.parse(t);
+  } catch {
+    return null;
+  }
+
+  let resultsRaw: unknown[] | null = null;
+  let envelope: Record<string, unknown> | null = null;
+
+  if (Array.isArray(v)) {
+    resultsRaw = v;
+  } else if (isRecord(v) && Array.isArray(v.results)) {
+    resultsRaw = v.results;
+    envelope = v;
+  } else {
+    return null;
+  }
+
+  const hitsBase = coerceConcordanceHits(resultsRaw);
+  if (hitsBase.length === 0) return null;
+
+  const n = hitsBase.length;
+  let total_count = n;
+  let shown_count = n;
+  let has_more = false;
+  let continuation_message = "";
+
+  if (envelope) {
+    if (typeof envelope.total_count === "number" && Number.isFinite(envelope.total_count)) {
+      total_count = Math.max(0, Math.floor(envelope.total_count));
+    }
+    if (typeof envelope.shown_count === "number" && Number.isFinite(envelope.shown_count)) {
+      shown_count = Math.max(0, Math.floor(envelope.shown_count));
+    }
+    const cont = envelope.continuation;
+    if (isRecord(cont)) {
+      if (typeof cont.has_more === "boolean") has_more = cont.has_more;
+      if (typeof cont.message === "string") continuation_message = cont.message.trim();
+    } else {
+      has_more = total_count > n;
+    }
+  } else if (typeof hitsBase[0]?._has_more === "boolean") {
+    has_more = hitsBase[0]._has_more;
+  }
+
+  if (total_count < n) total_count = n;
+  const page_size = Math.max(shown_count > 0 ? shown_count : n, 1);
+  const first = hitsBase[0];
+  let next_offset: number | null = null;
+  if (has_more) {
+    next_offset = typeof first?._next_offset === "number" ? first._next_offset : page_size;
+  }
+
+  const hits = hitsBase.map((h) => ({
+    ...h,
+    _offset: 0,
+    _page_size: page_size,
+    _total_count: total_count,
+    _has_more: has_more,
+    _next_offset: next_offset,
+  }));
+
+  return {
+    hits,
+    total_count,
+    offset: 0,
+    page_size,
+    has_more,
+    next_offset,
+    continuation_message,
+  };
 }
