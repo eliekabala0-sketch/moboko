@@ -1,4 +1,5 @@
 import { SermonAiSearchPanel } from "@/components/sermons/SermonAiSearchPanel";
+import { ConcordanceHitsView } from "@/components/sermons/ConcordanceHitsView";
 import { SermonLibrarySearchForm } from "@/components/sermons/SermonLibrarySearchForm";
 import { Masthead } from "@/components/layout/Masthead";
 import { fetchPublicAppSettings } from "@/lib/data/public-app-settings";
@@ -8,6 +9,10 @@ import {
   type ParagraphHitRow,
   type SermonListRow,
 } from "@/lib/sermons/search";
+import type { ConcordanceHit } from "@/lib/sermons/concordance-types";
+import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
+import { consumeNormalSearchQuota } from "@/lib/billing/normal-search-quota";
+import { createSupabaseServiceClient } from "@/lib/supabase/service";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import Link from "next/link";
 
@@ -32,7 +37,9 @@ export default async function SermonsPage({ searchParams }: PageProps) {
 
   let rows: SermonListRow[] = [];
   let paragraphHits: ParagraphHitRow[] = [];
+  const concordanceHits: ConcordanceHit[] = [];
   let paragraphSearchError: string | null = null;
+  let quotaLine: string | null = null;
 
   if (supabase) {
     let sermonQuery = supabase
@@ -63,13 +70,39 @@ export default async function SermonsPage({ searchParams }: PageProps) {
     rows = (sermonData ?? []) as SermonListRow[];
 
     if (pq.length >= 2) {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const admin = createSupabaseServiceClient();
+      if (!admin) {
+        paragraphSearchError = "Service de quota indisponible.";
+      } else {
+        const quota = await consumeNormalSearchQuota(
+          admin,
+          user?.id ?? null,
+          pub.freeNormalSearchesPerMonth,
+        );
+        if (!quota.ok) {
+          paragraphSearchError =
+            quota.error === "auth_required"
+              ? "Connectez-vous pour utiliser la recherche dans le texte."
+              : "Limite mensuelle de recherches gratuites atteinte. Un abonnement actif donne un acces illimite.";
+        } else if (quota.subscriptionActive) {
+          quotaLine = "Abonnement actif : recherche normale illimitee.";
+        } else if (quota.remaining != null) {
+          quotaLine = `${quota.remaining} recherche${quota.remaining > 1 ? "s" : ""} gratuite${quota.remaining > 1 ? "s" : ""} restante${quota.remaining > 1 ? "s" : ""} ce mois-ci.`;
+        }
+      }
+    }
+
+    if (pq.length >= 2 && !paragraphSearchError) {
       const { data: paraData, error: paraErr } = await supabase
         .from("sermon_paragraphs")
         .select(
           `
           paragraph_number,
           paragraph_text,
-          sermons ( slug, title, year )
+          sermons ( slug, title, year, preached_on, location )
         `,
         )
         .textSearch("search_tsv", pq, { type: "websearch", config: "french" })
@@ -89,10 +122,40 @@ export default async function SermonsPage({ searchParams }: PageProps) {
                   slug: sermon.slug as string,
                   title: sermon.title as string,
                   year: (sermon.year as number | null) ?? null,
+                  preached_on: (sermon.preached_on as string | null) ?? null,
+                  location: (sermon.location as string | null) ?? null,
                 }
               : null,
           } satisfies ParagraphHitRow;
         });
+        paragraphHits.sort((a, b) => {
+          const da = a.sermons?.preached_on ?? (a.sermons?.year != null ? `${a.sermons.year}-01-01` : "9999-12-31");
+          const db = b.sermons?.preached_on ?? (b.sermons?.year != null ? `${b.sermons.year}-01-01` : "9999-12-31");
+          const byDate = da.localeCompare(db);
+          if (byDate !== 0) return byDate;
+          return a.paragraph_number - b.paragraph_number;
+        });
+        for (const hit of paragraphHits) {
+          const s = hit.sermons;
+          if (!s?.slug) continue;
+          const n = await fetchNeighborParagraphs(supabase, s.slug, hit.paragraph_number);
+          concordanceHits.push({
+            slug: s.slug,
+            title: s.title,
+            location: s.location ?? null,
+            date: s.preached_on ?? (s.year != null ? String(s.year) : null),
+            paragraph_number: hit.paragraph_number,
+            paragraph_text: hit.paragraph_text,
+            prev_paragraph_number: n.prev_paragraph_number,
+            prev_paragraph_text: n.prev_paragraph_text,
+            next_paragraph_number: n.next_paragraph_number,
+            next_paragraph_text: n.next_paragraph_text,
+            _query: pq,
+            _total_count: paragraphHits.length,
+            _has_more: false,
+            _next_offset: null,
+          });
+        }
       }
     }
   }
@@ -134,6 +197,11 @@ export default async function SermonsPage({ searchParams }: PageProps) {
               <p className="moboko-card mt-4 p-6 text-sm text-[var(--muted)]">
                 Aucun paragraphe ne correspond à « {pq} ».
               </p>
+            ) : concordanceHits.length > 0 ? (
+              <div className="mt-4">
+                {quotaLine ? <p className="mb-3 text-xs text-[var(--muted)]">{quotaLine}</p> : null}
+                <ConcordanceHitsView hits={concordanceHits} />
+              </div>
             ) : (
               <ul className="mt-4 space-y-3">
                 {paragraphHits.map((hit, i) => {

@@ -4,6 +4,7 @@ import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
 import { fetchSingleParagraphCandidate, resolveUniqueSermonSlugByTitle } from "@/lib/sermons/retrieval-direct";
 import { fetchSermonSearchCandidates } from "@/lib/sermons/ai-sermon-search-server";
 import type { SermonParagraphCandidate } from "@/lib/sermons/ai-sermon-search-server";
+import { sortSermonOccurrencesOldestFirst } from "@/lib/sermons/source-order";
 
 function normLoose(s: string): string {
   return s
@@ -384,7 +385,7 @@ export async function tool_search_paragraphs_global(
     return { ok: true, results: [], total_count: 0, scope, next_offset: null, offset: Math.max(0, offset), page_size: Math.max(1, Math.min(50, pageSize)), has_more: false };
   }
   const candidates = await fetchSermonSearchCandidates(admin, query);
-  const ranked = rankCandidatesByQuery(candidates, query);
+  const ranked = sortSermonOccurrencesOldestFirst(rankCandidatesByQuery(candidates, query));
   const pg = pageSlice(ranked, offset, pageSize);
   const results = await Promise.all(
     pg.page.map((c) =>
@@ -451,7 +452,7 @@ export async function tool_search_paragraphs_in_sermon(
     return { ok: true, results: [], total_count: 0, scope, next_offset: null, offset: Math.max(0, offset), page_size: Math.max(1, Math.min(50, pageSize)), has_more: false };
   }
   const candidates = (await fetchSermonSearchCandidates(admin, query)).filter((c) => c.slug === slug);
-  const ranked = rankCandidatesByQuery(candidates, query);
+  const ranked = sortSermonOccurrencesOldestFirst(rankCandidatesByQuery(candidates, query));
   const pg = pageSlice(ranked, offset, pageSize);
   const results = await Promise.all(
     pg.page.map((c) =>
@@ -513,4 +514,3 @@ export async function tool_continue_last_scope(
   }
   return tool_search_paragraphs_global(admin, { query, offset, page_size: pageSize, conversation_id: conversationId });
 }
-

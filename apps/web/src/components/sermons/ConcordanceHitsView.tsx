@@ -6,9 +6,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 function clipPreview(text: string, max = 140): string {
-  const t = text.replace(/\s+/g, " ").trim();
-  if (t.length <= max) return t;
-  return `${t.slice(0, max)}…`;
+  void max;
+  return text;
 }
 
 type Props = {
@@ -30,6 +29,8 @@ export function ConcordanceHitsView({
   const [items, setItems] = useState<ConcordanceHit[]>(hits);
   const [visible, setVisible] = useState(pageSize);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   useEffect(() => {
     setItems(hits);
@@ -110,6 +111,39 @@ export function ConcordanceHitsView({
       setVisible((v) => v + nextHits.length);
     } finally {
       setLoadingMore(false);
+    }
+  }
+
+  async function downloadPdf() {
+    if (pdfBusy) return;
+    setPdfBusy(true);
+    setPdfError(null);
+    try {
+      const res = await fetch("/api/pdf/sermon-compilation", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: allHits.map((h) => ({ slug: h.slug, paragraph_number: h.paragraph_number })),
+        }),
+      });
+      if (!res.ok) {
+        if (res.status === 401) setPdfError("Connectez-vous pour telecharger le PDF.");
+        else if (res.status === 402) setPdfError("Un abonnement actif est requis pour telecharger le PDF.");
+        else setPdfError("Telechargement PDF indisponible pour le moment.");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "moboko-compilation.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setPdfBusy(false);
     }
   }
 
@@ -198,6 +232,17 @@ export function ConcordanceHitsView({
       {continuationMessage?.trim() ? (
         <p className="text-xs leading-relaxed text-[var(--muted)]">{continuationMessage.trim()}</p>
       ) : null}
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={() => void downloadPdf()}
+          disabled={pdfBusy}
+          className="inline-flex items-center rounded-full border border-[var(--border-strong)] bg-[var(--surface)] px-4 py-2 text-xs font-semibold text-[var(--foreground)] transition hover:border-[var(--accent)]/40 disabled:opacity-50"
+        >
+          {pdfBusy ? "Preparation PDF..." : "Telecharger PDF"}
+        </button>
+        {pdfError ? <span className="text-xs text-[var(--danger)]">{pdfError}</span> : null}
+      </div>
       <ul className="space-y-2">
       {visibleHits.map((h) => {
         const k = hitKey(h);

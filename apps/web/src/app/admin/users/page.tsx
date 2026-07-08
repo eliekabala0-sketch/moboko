@@ -21,7 +21,7 @@ export default async function AdminUsersPage() {
           Utilisateurs & crédits
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-[var(--muted)]">
-          Solde crédits, premium et accès offert (paiement Badiboss Pay à brancher plus tard).
+          Solde crédits, premium et accès offert (paiement sécurisé à brancher plus tard).
         </p>
       </div>
 

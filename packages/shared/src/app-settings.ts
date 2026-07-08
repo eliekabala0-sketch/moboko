@@ -17,6 +17,8 @@ export const PUBLIC_APP_SETTING_KEYS = {
   /** Recherche assistée par IA sur les sermons (bibliothèque). */
   sermonAiSearchEnabled: "sermon_ai_search_enabled",
   sermonAiSearchCreditCost: "sermon_ai_search_credit_cost",
+  freeNormalSearchesPerMonth: "free_normal_searches_per_month",
+  subscriptionMonthlyAiCredits: "subscription_monthly_ai_credits",
 } as const;
 
 /** Liste alignée sur `app_setting_is_public_readable` côté SQL. */
@@ -49,6 +51,8 @@ export type PublicHomePageSettings = {
   initialFreeCredits: number;
   sermonAiSearchEnabled: boolean;
   sermonAiSearchCreditCost: number;
+  freeNormalSearchesPerMonth: number;
+  subscriptionMonthlyAiCredits: number;
 };
 
 export const defaultPublicHomePageSettings: PublicHomePageSettings = {
@@ -64,4 +68,6 @@ export const defaultPublicHomePageSettings: PublicHomePageSettings = {
   initialFreeCredits: 5,
   sermonAiSearchEnabled: true,
   sermonAiSearchCreditCost: 2,
+  freeNormalSearchesPerMonth: 20,
+  subscriptionMonthlyAiCredits: 0,
 };

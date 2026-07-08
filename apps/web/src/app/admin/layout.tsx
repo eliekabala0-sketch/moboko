@@ -34,6 +34,12 @@ export default async function AdminLayout({
             >
               Utilisateurs
             </Link>
+            <Link
+              href="/admin/billing"
+              className="text-sm text-[var(--muted)] transition hover:text-[var(--foreground)]"
+            >
+              Paiements
+            </Link>
           </div>
           <Link
             href="/"

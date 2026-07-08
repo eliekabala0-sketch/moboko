@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sanitizeLikePattern } from "@/lib/sermons/search";
+import { sortSermonOccurrencesOldestFirst } from "@/lib/sermons/source-order";
 
 export type SermonParagraphCandidate = {
   slug: string;
@@ -322,5 +323,5 @@ export async function fetchSermonSearchCandidates(
     }
   }
 
-  return acc.slice(0, 360);
+  return sortSermonOccurrencesOldestFirst(acc).slice(0, 360);
 }

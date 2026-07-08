@@ -50,6 +50,16 @@ function rowToPartial(
         sermonAiSearchCreditCost:
           typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 2,
       };
+    case PUBLIC_APP_SETTING_KEYS.freeNormalSearchesPerMonth:
+      return {
+        freeNormalSearchesPerMonth:
+          typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 20,
+      };
+    case PUBLIC_APP_SETTING_KEYS.subscriptionMonthlyAiCredits:
+      return {
+        subscriptionMonthlyAiCredits:
+          typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0,
+      };
     default:
       return {};
   }

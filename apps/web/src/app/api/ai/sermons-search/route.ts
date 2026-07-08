@@ -1,7 +1,8 @@
 import { fetchSermonSearchCandidates, type SermonParagraphCandidate } from "@/lib/sermons/ai-sermon-search-server";
 import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
-import { fetchConcordanceSemanticCandidates } from "@/lib/sermons/concordance-fetch-candidates";
-import { tryDeterministicRetrieval } from "@/lib/sermons/retrieval-deterministic";
+import { getOpenAIClient } from "@/lib/ai/moboko-chat";
+import { resolveHybridRetrieval } from "@/lib/sermons/retrieval-resolve";
+import { ensureMonthlySubscriptionCredits } from "@/lib/billing/subscription-credits";
 import { getUserFromApiRequest } from "@/lib/supabase/api-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
 import {
@@ -70,6 +71,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "non_authentifie" }, { status: 401 });
   }
 
+  const openai = getOpenAIClient();
+
   let query: string;
   let offset = 0;
   let pageSize = CONCORDANCE_PAGE_SIZE;
@@ -106,6 +109,16 @@ export async function POST(request: Request) {
   if (!aiEnabled) {
     return NextResponse.json({ error: "sermon_ia_desactive" }, { status: 403 });
   }
+  const isContinuationPage = offset > 0;
+  const creditCost = isContinuationPage
+    ? 0
+    : Math.max(0, Math.floor(Number(settings[PUBLIC_APP_SETTING_KEYS.sermonAiSearchCreditCost] ?? 2)));
+  const subscriptionMonthlyCredits = Math.max(
+    0,
+    Math.floor(Number(settings[PUBLIC_APP_SETTING_KEYS.subscriptionMonthlyAiCredits] ?? 0)),
+  );
+
+  await ensureMonthlySubscriptionCredits(admin, user.id, subscriptionMonthlyCredits);
 
   const { data: profile, error: profileErr } = await admin
     .from("profiles")
@@ -120,15 +133,60 @@ export async function POST(request: Request) {
   const balance = profile.credit_balance ?? 0;
   const billingExempt = Boolean(profile.is_free_access || profile.is_premium);
 
-  // Côté sermons : recherche SANS IA (déterministe + FTS local).
-  const det = await tryDeterministicRetrieval(admin, query, { primarySlug: null });
-  const semantic = det?.semantic ?? null;
-  const candidates =
-    det?.preFetchedCandidates != null
-      ? det.preFetchedCandidates
-      : semantic
-        ? await fetchConcordanceSemanticCandidates(admin, query, semantic, "library")
-        : await fetchSermonSearchCandidates(admin, query);
+  // Recherche assistee : comprehension IA, puis extraction exacte depuis Supabase.
+  if (!billingExempt && creditCost > 0 && balance < creditCost) {
+    return NextResponse.json(
+      {
+        error: "credits_insuffisants",
+        message: `Il vous faut ${creditCost} credit(s) pour cette action (solde : ${balance}).`,
+        balance,
+        required: creditCost,
+      },
+      { status: 402 },
+    );
+  }
+
+  let semantic: Awaited<ReturnType<typeof resolveHybridRetrieval>>["semantic"] = null;
+  let candidates: SermonParagraphCandidate[];
+  if (isContinuationPage) {
+    candidates = await fetchSermonSearchCandidates(admin, query);
+  } else {
+    if (!openai) {
+      return NextResponse.json(
+        { error: "openai_non_configure", detail: "OPENAI_API_KEY manquante cote serveur." },
+        { status: 503 },
+      );
+    }
+    const retrieval = await resolveHybridRetrieval(admin, openai, query, {
+      primarySlug: null,
+      turnContextBlock: null,
+      profile: "library",
+    });
+    semantic = retrieval.semantic;
+    candidates = retrieval.candidates;
+  }
+
+  let balanceAfter = balance;
+  let billingSkipped = billingExempt;
+  if (creditCost > 0) {
+    const { data: debit, error: dErr } = await admin.rpc("consume_credits_atomic", {
+      p_user_id: user.id,
+      p_amount: creditCost,
+      p_reason: "sermon_ai_search",
+      p_ref_type: "sermons_search",
+      p_ref_id: null,
+    });
+    const debitObj = debit as { ok?: boolean; balance_after?: number; billing_skipped?: boolean } | null;
+    if (dErr || !debitObj || debitObj.ok !== true) {
+      return NextResponse.json(
+        { error: "debit_credits_echoue", detail: debitObj ?? dErr?.message },
+        { status: 500 },
+      );
+    }
+    billingSkipped = Boolean(debitObj.billing_skipped);
+    if (typeof debitObj.balance_after === "number") balanceAfter = debitObj.balance_after;
+  }
+  const creditsCharged = billingSkipped ? 0 : creditCost;
 
   if (candidates.length === 0) {
     return NextResponse.json({
@@ -140,10 +198,10 @@ export async function POST(request: Request) {
       has_more: false,
       next_offset: null,
       message: EMPTY_CONCORDANCE_MESSAGE,
-      credits_charged: 0,
-      credit_cost: 0,
-      balance_after: balance,
-      billing_skipped: billingExempt,
+      credits_charged: creditsCharged,
+      credit_cost: creditCost,
+      balance_after: balanceAfter,
+      billing_skipped: billingSkipped,
     });
   }
 
@@ -184,10 +242,10 @@ export async function POST(request: Request) {
     has_more: page.hasMore,
     next_offset: page.nextOffset,
     message: page.totalCount === 0 ? EMPTY_CONCORDANCE_MESSAGE : null,
-    credits_charged: 0,
-    credit_cost: 0,
-    balance_after: balance,
-    billing_skipped: billingExempt,
+    credits_charged: creditsCharged,
+    credit_cost: creditCost,
+    balance_after: balanceAfter,
+    billing_skipped: billingSkipped,
     scope: semantic?.restrict_sermon_slug ? { kind: "sermon", sermon_slug: semantic.restrict_sermon_slug } : { kind: "library" },
   });
 }

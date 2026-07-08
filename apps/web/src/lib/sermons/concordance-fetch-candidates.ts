@@ -5,6 +5,7 @@ import {
 } from "@/lib/sermons/ai-sermon-search-server";
 import { fetchSingleParagraphCandidate } from "@/lib/sermons/retrieval-direct";
 import type { SemanticIntent } from "@/lib/sermons/semantic-intent";
+import { sortSermonOccurrencesOldestFirst } from "@/lib/sermons/source-order";
 
 function normQueryTokens(s: string): string[] {
   const t = s
@@ -138,15 +139,5 @@ export async function fetchConcordanceSemanticCandidates(
     const maxY = semantic.year_to ?? 2100;
     out = out.filter((c) => c.year == null || (c.year >= minY && c.year <= maxY));
   }
-  const score = (c: SermonParagraphCandidate) => {
-    const t = c.paragraph_text.toLowerCase();
-    let s = 0;
-    if (semantic?.search_mode === "exact_quote_search" && semantic.quoted_phrase) {
-      if (t.includes(semantic.quoted_phrase.toLowerCase())) s += 12;
-    }
-    if (semantic?.topic && t.includes(semantic.topic.toLowerCase())) s += 2;
-    return s;
-  };
-  out.sort((a, b) => score(b) - score(a));
-  return out.slice(0, MAX_CANDIDATES);
+  return sortSermonOccurrencesOldestFirst(out).slice(0, MAX_CANDIDATES);
 }

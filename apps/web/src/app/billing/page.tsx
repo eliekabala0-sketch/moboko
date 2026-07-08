@@ -1,4 +1,5 @@
 import { Masthead } from "@/components/layout/Masthead";
+import { BillingCheckoutButtons } from "@/components/billing/BillingCheckoutButtons";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import Link from "next/link";
 
@@ -19,6 +20,15 @@ export default async function BillingPage({ searchParams }: PageProps) {
   let balance: number | null = null;
   let billingExempt = false;
   let isLoggedIn = false;
+  let transactions: {
+    id: string;
+    purpose: string | null;
+    status: string | null;
+    amount: number | null;
+    currency: string | null;
+    credits: number | null;
+    created_at: string | null;
+  }[] = [];
 
   if (supabase) {
     const {
@@ -35,6 +45,13 @@ export default async function BillingPage({ searchParams }: PageProps) {
         balance = typeof prof.credit_balance === "number" ? prof.credit_balance : 0;
         billingExempt = Boolean(prof.is_premium || prof.is_free_access);
       }
+      const { data: txs } = await supabase
+        .from("payment_transactions")
+        .select("id, purpose, status, amount, currency, credits, created_at")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(8);
+      transactions = txs ?? [];
     }
   }
 
@@ -63,7 +80,7 @@ export default async function BillingPage({ searchParams }: PageProps) {
         </h1>
         <p className="mt-4 text-sm leading-relaxed text-[var(--muted)]">
           Les crédits servent aux fonctions assistées par IA (chat, recherche dans les sermons, etc.). Le paiement en
-          ligne et les abonnements seront proposés via Badiboss Pay ; cette page prépare déjà le parcours.
+          ligne passe par un checkout sécurisé, puis l’activation est confirmée côté serveur.
         </p>
 
         {isLoggedIn ? (
@@ -99,40 +116,55 @@ export default async function BillingPage({ searchParams }: PageProps) {
         <section id="credits" className="scroll-mt-28 mt-12">
           <h2 className="text-lg font-semibold text-[var(--foreground)]">Acheter des crédits</h2>
           <p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">
-            Rechargement par carte ou wallet : intégration Badiboss Pay à venir. En attendant, contactez l’équipe si vous
-            avez besoin d’un crédit manuel.
+            Rechargement séparé de l’abonnement. Les crédits sont ajoutés seulement après confirmation du paiement.
           </p>
           <div className="mt-5 flex flex-wrap gap-3">
-            <button
-              type="button"
-              disabled
-              className="moboko-btn-primary cursor-not-allowed px-6 py-3 text-[14px] opacity-45"
-              title="Bientôt disponible"
-            >
-              Recharger maintenant
-            </button>
+            <BillingCheckoutButtons disabled={!isLoggedIn} mode="credits" />
           </div>
         </section>
 
         <section id="abonnements" className="scroll-mt-28 mt-12">
           <h2 className="text-lg font-semibold text-[var(--foreground)]">Abonnements</h2>
           <p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">
-            Des offres d’abonnement (accès illimité ou packs) seront publiées ici. Aucun paiement récurrent n’est encore
-            activé.
+            L’abonnement actif donne accès à la recherche normale illimitée et autorise les téléchargements PDF.
           </p>
           <ul className="moboko-card mt-5 list-inside list-disc space-y-2 p-6 text-sm text-[var(--muted)]">
-            <li>Option premium : utilisation des IA sans débit de crédits (selon politique Moboko).</li>
-            <li>Packs de crédits : adaptés à la recherche sermons et au chat.</li>
-            <li>Paiement sécurisé prévu via Badiboss Pay.</li>
+            <li>Recherche normale illimitée pendant la période active.</li>
+            <li>Téléchargement PDF réservé aux abonnés actifs.</li>
+            <li>Crédits IA séparés, sauf crédits mensuels offerts par configuration admin.</li>
           </ul>
-          <button
-            type="button"
-            disabled
-            className="mt-4 inline-flex cursor-not-allowed rounded-full border border-[var(--border-strong)] bg-[var(--surface)] px-6 py-3 text-sm font-semibold text-[var(--muted)] opacity-60"
-          >
-            Voir les offres (bientôt)
-          </button>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <BillingCheckoutButtons disabled={!isLoggedIn} mode="subscription" />
+          </div>
         </section>
+        {isLoggedIn && transactions.length > 0 ? (
+          <section className="scroll-mt-28 mt-12">
+            <h2 className="text-lg font-semibold text-[var(--foreground)]">Historique</h2>
+            <div className="moboko-card mt-5 divide-y divide-[var(--border)] p-2">
+              {transactions.map((tx) => (
+                <div key={tx.id} className="flex items-center justify-between gap-4 px-4 py-3 text-sm">
+                  <div>
+                    <p className="font-medium text-[var(--foreground)]">
+                      {tx.purpose === "credits" ? "Crédits IA" : "Abonnement"}
+                    </p>
+                    <p className="mt-1 text-xs text-[var(--muted)]">
+                      {tx.created_at ? new Date(tx.created_at).toLocaleDateString("fr-FR") : ""}
+                      {tx.credits ? ` · ${tx.credits} crédits` : ""}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-medium tabular-nums text-[var(--foreground)]">
+                      {tx.amount ?? 0} {tx.currency ?? ""}
+                    </p>
+                    <p className="mt-1 text-xs uppercase tracking-wider text-[var(--muted)]">
+                      {tx.status ?? "reçu"}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
       </div>
     </div>
   );

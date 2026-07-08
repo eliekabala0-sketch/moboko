@@ -61,5 +61,11 @@ export type SermonListRow = {
 export type ParagraphHitRow = {
   paragraph_number: number;
   paragraph_text: string;
-  sermons: { slug: string; title: string; year: number | null } | null;
+  sermons: {
+    slug: string;
+    title: string;
+    year: number | null;
+    preached_on?: string | null;
+    location?: string | null;
+  } | null;
 };

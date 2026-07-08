@@ -48,6 +48,12 @@ export function PublicSettingsForm({ initial }: Props) {
   const [sermonAiCost, setSermonAiCost] = useState(
     Number(initial[PUBLIC_APP_SETTING_KEYS.sermonAiSearchCreditCost] ?? 2),
   );
+  const [freeSearches, setFreeSearches] = useState(
+    Number(initial[PUBLIC_APP_SETTING_KEYS.freeNormalSearchesPerMonth] ?? 20),
+  );
+  const [subscriptionCredits, setSubscriptionCredits] = useState(
+    Number(initial[PUBLIC_APP_SETTING_KEYS.subscriptionMonthlyAiCredits] ?? 0),
+  );
 
   function save() {
     setErr(null);
@@ -66,6 +72,8 @@ export function PublicSettingsForm({ initial }: Props) {
           [PUBLIC_APP_SETTING_KEYS.initialFreeCredits]: Math.max(0, Math.floor(initialCredits)),
           [PUBLIC_APP_SETTING_KEYS.sermonAiSearchEnabled]: sermonAi,
           [PUBLIC_APP_SETTING_KEYS.sermonAiSearchCreditCost]: Math.max(0, Math.floor(sermonAiCost)),
+          [PUBLIC_APP_SETTING_KEYS.freeNormalSearchesPerMonth]: Math.max(0, Math.floor(freeSearches)),
+          [PUBLIC_APP_SETTING_KEYS.subscriptionMonthlyAiCredits]: Math.max(0, Math.floor(subscriptionCredits)),
         });
         setMessage("Paramètres enregistrés.");
         router.refresh();
@@ -187,6 +195,32 @@ export function PublicSettingsForm({ initial }: Props) {
               />
               <span className="mt-1.5 block text-[11px] font-normal leading-relaxed text-[var(--muted)]">
                 Par requête sur la page Sermons (débit séparé du chat).
+              </span>
+            </label>
+            <label className="text-sm font-medium text-[var(--foreground)]">
+              <span className="text-[var(--muted)]">Recherches gratuites / mois</span>
+              <input
+                type="number"
+                min={0}
+                value={freeSearches}
+                onChange={(e) => setFreeSearches(Number(e.target.value))}
+                className="moboko-input mt-2 tabular-nums"
+              />
+              <span className="mt-1.5 block text-[11px] font-normal leading-relaxed text-[var(--muted)]">
+                Recherche normale full-text. Abonnement actif = illimite.
+              </span>
+            </label>
+            <label className="text-sm font-medium text-[var(--foreground)]">
+              <span className="text-[var(--muted)]">Credits IA abonnement / mois</span>
+              <input
+                type="number"
+                min={0}
+                value={subscriptionCredits}
+                onChange={(e) => setSubscriptionCredits(Number(e.target.value))}
+                className="moboko-input mt-2 tabular-nums"
+              />
+              <span className="mt-1.5 block text-[11px] font-normal leading-relaxed text-[var(--muted)]">
+                Optionnel. Ajoute une fois par mois aux abonnes actifs.
               </span>
             </label>
           </div>
