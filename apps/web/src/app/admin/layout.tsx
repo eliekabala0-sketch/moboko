@@ -40,6 +40,12 @@ export default async function AdminLayout({
             >
               Paiements
             </Link>
+            <Link
+              href="/admin/hymns"
+              className="text-sm text-[var(--muted)] transition hover:text-[var(--foreground)]"
+            >
+              Cantiques
+            </Link>
           </div>
           <Link
             href="/"
