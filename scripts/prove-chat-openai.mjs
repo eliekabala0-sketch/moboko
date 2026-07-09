@@ -81,7 +81,7 @@ async function main() {
   console.log("endpoint:", `${baseUrl.replace(/\/$/, "")}/api/ai/chat`);
   console.log("OPENAI_API_KEY dans .env.local :", openaiKey ? `présente (${openaiKey.length} car.)` : "ABSENTE");
   console.log(
-    "Côté serveur : vérifier les lignes [chat-openai] dans la console Next (request_start, workflow_id, openai_http_status, …).",
+    "Côté serveur : vérifier les lignes [chat-openai] dans la console Next (request_start, openai_status, raw_response_preview, supabase_candidate_count, rehydrated_results_count).",
   );
   console.log(
     "Pour moboko_debug_chat_openai dans le JSON : redémarrer Next avec MOBOKO_CHAT_OPENAI_DEBUG=1",
@@ -131,7 +131,7 @@ async function main() {
   const body = {
     conversationId: conv.id,
     mode: "text",
-    text: "Preuve Moboko : une phrase courte sans attendre de résultats sermon.",
+    text: "Montre-moi des passages sur la semence du serpent.",
   };
 
   console.log("Envoi POST /api/ai/chat …");
@@ -142,6 +142,8 @@ async function main() {
   console.log("HTTP status (Next):", status);
   console.log("ok:", j.ok);
   console.log("error:", j.error ?? null);
+  console.log("credits_charged:", j.credits_charged ?? null);
+  console.log("balance_after:", j.balance_after ?? null);
 
   const dbg = j.moboko_debug_chat_openai;
   if (dbg && typeof dbg === "object") {
@@ -149,10 +151,13 @@ async function main() {
     console.log("--- moboko_debug_chat_openai (serveur en MOBOKO_CHAT_OPENAI_DEBUG=1) ---");
     console.log(JSON.stringify(dbg, null, 2));
     console.log("OpenAI appelé (backend) :", dbg.openai_called === true ? "oui" : "non");
-    console.log("openai_http_status (vers api.openai.com) :", dbg.openai_http_status);
+    console.log("openai_status :", dbg.openai_status);
     console.log("raw_response_received :", dbg.raw_response_received);
+    console.log("supabase_candidate_count :", dbg.supabase_candidate_count);
     console.log("parsed_results_count :", dbg.parsed_results_count);
+    console.log("rehydrated_results_count :", dbg.rehydrated_results_count);
     console.log("empty_fallback_used :", dbg.empty_fallback_used);
+    console.log("fallback_search_used :", dbg.fallback_search_used);
     if (typeof dbg.output_preview === "string" && dbg.output_preview.length) {
       console.log("extrait réponse brute (400c) :", dbg.output_preview.slice(0, 200).replace(/\s+/g, " "));
     }

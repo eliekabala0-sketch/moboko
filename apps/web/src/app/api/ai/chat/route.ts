@@ -6,14 +6,16 @@ import {
   transcribeAudio,
   type DbMessageRow,
 } from "@/lib/ai/moboko-chat";
-import { fetchOpenAiResponsesWithWorkflow } from "@/lib/chat/chat-openai-direct";
-import { parseChatAgentConcordanceOutput, type ConcordanceHit } from "@/lib/sermons/concordance-types";
+import type { ConcordanceHit } from "@/lib/sermons/concordance-types";
 import { getUserFromApiRequest } from "@/lib/supabase/api-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
 import { tool_continue_last_scope } from "@/lib/chat/sermon-retrieval-tools";
 import { fetchSingleParagraphCandidate } from "@/lib/sermons/retrieval-direct";
 import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
 import { sortSermonOccurrencesOldestFirst } from "@/lib/sermons/source-order";
+import { runRetrievalAgent } from "@/lib/sermons/retrieval-agent";
+import { fetchConcordanceSemanticCandidates } from "@/lib/sermons/concordance-fetch-candidates";
+import { fetchSermonSearchCandidates, type SermonParagraphCandidate } from "@/lib/sermons/ai-sermon-search-server";
 import { ensureMonthlySubscriptionCredits } from "@/lib/billing/subscription-credits";
 import {
   ALL_PUBLIC_APP_SETTING_KEYS,
@@ -82,11 +84,6 @@ function pathBelongsToUser(path: string, userId: string) {
 }
 
 const EMPTY_CONCORDANCE_MESSAGE = "Aucun paragraphe exact trouvé pour cette recherche.";
-
-/** Défaut projet ; surcharge possible via OPENAI_CHAT_WORKFLOW_ID (env). */
-const OPENAI_CHAT_WORKFLOW_ID_DEFAULT =
-  "wf_69d102003c8c8190bad519a82daabdb20e38556cea1016db";
-const OPENAI_RESPONSES_TEXT_MODEL = "gpt-4.1";
 
 async function rehydrateChatConcordanceHits(
   admin: NonNullable<ReturnType<typeof createSupabaseServiceClient>>,
@@ -423,43 +420,28 @@ export async function POST(request: Request) {
     let mobokoDebugChatOpenAi: Record<string, unknown> | undefined;
 
     if (body.mode === "text" && userContent) {
-      const apiKey = process.env.OPENAI_API_KEY?.trim();
-      const workflowId =
-        process.env.OPENAI_CHAT_WORKFLOW_ID?.trim() || OPENAI_CHAT_WORKFLOW_ID_DEFAULT;
-
       console.log("[chat-openai] request_start");
 
-      if (!apiKey) {
+      if (!openai) {
         console.log("[chat-openai] missing_api_key");
         return NextResponse.json(
-          { error: "openai_non_configure", detail: "OPENAI_API_KEY manquante côté serveur." },
+          { error: "openai_non_configure", detail: "OPENAI_API_KEY manquante cote serveur." },
           { status: 503 },
         );
       }
-      if (!workflowId) {
-        console.log("[chat-openai] missing_workflow_id");
-        return NextResponse.json(
-          {
-            error: "workflow_chat_manquant",
-            detail: "OPENAI_CHAT_WORKFLOW_ID vide ; définir l’id workflow OpenAI.",
-          },
-          { status: 503 },
-        );
-      }
-
-      console.log("[chat-openai] workflow_id", workflowId);
 
       let emptyFallbackUsed = false;
       let parsedResultsCount = 0;
-      let openaiHttpStatus = 0;
-      let rawReceived = false;
+      let candidateCount = 0;
+      let openaiStatus = "not_called";
       let outputPreview = "";
+      let usedFallbackSearch = false;
 
       const setEmptyMeta = () => {
         emptyFallbackUsed = true;
         assistantText = EMPTY_CONCORDANCE_MESSAGE;
         metaAssistant = {
-          model: OPENAI_RESPONSES_TEXT_MODEL,
+          model: getChatModel(),
           sermon_context_count: 0,
           moboko_kind: "sermon_concordance_empty",
           moboko_retrieval: {
@@ -475,86 +457,91 @@ export async function POST(request: Request) {
       };
 
       try {
-        const direct = await fetchOpenAiResponsesWithWorkflow({
-          apiKey,
-          model: OPENAI_RESPONSES_TEXT_MODEL,
-          workflowId,
-          userMessage: userContent,
-        });
+        const semantic = await runRetrievalAgent(openai, userContent, null);
+        openaiStatus = semantic ? "ok" : "empty";
+        outputPreview = semantic
+          ? JSON.stringify({
+              intent: semantic.intent,
+              topic: semantic.topic,
+              retrieval_phrases: semantic.retrieval_phrases,
+              expansions: semantic.expansions,
+            }).slice(0, 420)
+          : "";
+        console.log("[chat-openai] openai_status", openaiStatus);
+        console.log("[chat-openai] raw_response_preview", outputPreview);
 
-        openaiHttpStatus = direct.httpStatus;
-        rawReceived = direct.rawResponseReceived;
-        console.log("[chat-openai] openai_http_status", openaiHttpStatus);
-        console.log("[chat-openai] raw_response_received =", rawReceived);
+        let candidates: SermonParagraphCandidate[] = [];
+        if (semantic) {
+          candidates = await fetchConcordanceSemanticCandidates(admin, userContent, semantic, "chat");
+        }
+        if (candidates.length === 0) {
+          usedFallbackSearch = true;
+          candidates = await fetchSermonSearchCandidates(admin, userContent);
+        }
+        candidateCount = candidates.length;
+        console.log("[chat-openai] supabase_candidate_count", candidateCount);
 
-        const okHttp = direct.httpStatus >= 200 && direct.httpStatus < 300;
-        if (!rawReceived || !okHttp) {
-          const errSnippet = JSON.stringify(direct.data ?? null).slice(0, 800);
-          console.log("[chat-openai] openai_error_response", errSnippet);
+        if (candidates.length === 0) {
           setEmptyMeta();
         } else {
-          const outputText = direct.outputText;
-          outputPreview = outputText.slice(0, 400);
-          if (!outputText) {
-            parsedResultsCount = 0;
+          const hits: ConcordanceHit[] = candidates.slice(0, CONCORDANCE_PAGE_SIZE).map((c) => ({
+            slug: c.slug,
+            title: c.title,
+            location: c.location,
+            date: c.preached_on ?? (c.year != null ? String(c.year) : null),
+            paragraph_number: c.paragraph_number,
+            paragraph_text: c.paragraph_text,
+            prev_paragraph_number: null,
+            prev_paragraph_text: null,
+            next_paragraph_number: null,
+            next_paragraph_text: null,
+          }));
+          const enriched = await rehydrateChatConcordanceHits(admin, hits, {
+            query: userContent,
+            conversationId: body.conversationId,
+            offset: 0,
+            pageSize: CONCORDANCE_PAGE_SIZE,
+            totalCount: candidates.length,
+            hasMore: candidates.length > CONCORDANCE_PAGE_SIZE,
+            nextOffset: candidates.length > CONCORDANCE_PAGE_SIZE ? CONCORDANCE_PAGE_SIZE : null,
+          });
+          parsedResultsCount = enriched.length;
+          if (enriched.length === 0) {
             setEmptyMeta();
           } else {
-            const parsed = parseChatAgentConcordanceOutput(outputText);
-            parsedResultsCount = parsed?.hits.length ?? 0;
-            if (!parsed || parsed.hits.length === 0) {
-              setEmptyMeta();
-            } else {
-              const { hits } = parsed;
-              const total_count = parsed.total_count;
-              const offset = parsed.offset;
-              const page_size = parsed.page_size;
-              const has_more = parsed.has_more;
-              const next_offset = parsed.next_offset;
-              const enriched = await rehydrateChatConcordanceHits(admin, hits, {
+            sermonContextCount = enriched.length;
+            assistantText = "";
+            emptyFallbackUsed = false;
+            const scope =
+              semantic?.restrict_sermon_slug
+                ? { kind: "sermon" as const, sermon_slug: semantic.restrict_sermon_slug }
+                : enriched.length > 0 && enriched.every((h) => h.slug === enriched[0]!.slug)
+                  ? { kind: "sermon" as const, sermon_slug: enriched[0]!.slug }
+                  : { kind: "library" as const };
+            const suggestions = (semantic?.expansions ?? []).slice(0, 2);
+            metaAssistant = {
+              model: getChatModel(),
+              sermon_context_count: sermonContextCount,
+              moboko_kind: "sermon_concordance",
+              results: enriched,
+              total_count: Math.max(candidates.length, enriched.length),
+              offset: 0,
+              page_size: CONCORDANCE_PAGE_SIZE,
+              has_more: candidates.length > CONCORDANCE_PAGE_SIZE,
+              next_offset: candidates.length > CONCORDANCE_PAGE_SIZE ? CONCORDANCE_PAGE_SIZE : null,
+              ...(suggestions.length > 0 ? { moboko_suggestions: suggestions } : {}),
+              moboko_retrieval: {
                 query: userContent,
-                conversationId: body.conversationId,
-                offset,
-                pageSize: page_size,
-                totalCount: total_count,
-                hasMore: has_more,
-                nextOffset: next_offset,
-              });
-              parsedResultsCount = enriched.length;
-              if (enriched.length === 0) {
-                setEmptyMeta();
-              } else {
-                sermonContextCount = enriched.length;
-                assistantText = "";
-                emptyFallbackUsed = false;
-                const scope =
-                  enriched.length > 0 && enriched.every((h) => h.slug === enriched[0]!.slug)
-                    ? { kind: "sermon" as const, sermon_slug: enriched[0]!.slug }
-                    : { kind: "library" as const };
-                const contMsg = parsed.continuation_message.trim();
-                metaAssistant = {
-                  model: OPENAI_RESPONSES_TEXT_MODEL,
-                  sermon_context_count: sermonContextCount,
-                  moboko_kind: "sermon_concordance",
-                  results: enriched,
-                  total_count: Math.max(total_count, enriched.length),
-                  offset,
-                  page_size,
-                  has_more,
-                  next_offset,
-                  ...(contMsg ? { moboko_continuation_message: contMsg } : {}),
-                  moboko_retrieval: {
-                    query: userContent,
-                    scope,
-                    offset,
-                    page_size,
-                    total_count: Math.max(total_count, enriched.length),
-                    has_more,
-                    next_offset,
-                  },
-                  moboko_tool: "openai_responses_workflow_direct_rehydrated",
-                };
-              }
-            }
+                scope,
+                offset: 0,
+                page_size: CONCORDANCE_PAGE_SIZE,
+                total_count: Math.max(candidates.length, enriched.length),
+                has_more: candidates.length > CONCORDANCE_PAGE_SIZE,
+                next_offset: candidates.length > CONCORDANCE_PAGE_SIZE ? CONCORDANCE_PAGE_SIZE : null,
+                semantic,
+              },
+              moboko_tool: "openai_semantic_retrieval_rehydrated",
+            };
           }
         }
       } catch (e) {
@@ -563,16 +550,19 @@ export async function POST(request: Request) {
       }
 
       console.log("[chat-openai] parsed_results_count", parsedResultsCount);
+      console.log("[chat-openai] rehydrated_results_count", parsedResultsCount);
       console.log("[chat-openai] empty_fallback_used =", emptyFallbackUsed);
 
       if (process.env.MOBOKO_CHAT_OPENAI_DEBUG === "1") {
         mobokoDebugChatOpenAi = {
           openai_called: true,
-          openai_http_status: openaiHttpStatus,
-          raw_response_received: rawReceived,
+          openai_status: openaiStatus,
+          raw_response_received: openaiStatus === "ok",
+          supabase_candidate_count: candidateCount,
           parsed_results_count: parsedResultsCount,
+          rehydrated_results_count: parsedResultsCount,
           empty_fallback_used: emptyFallbackUsed,
-          workflow_id: workflowId,
+          fallback_search_used: usedFallbackSearch,
           output_preview: outputPreview,
         };
       }
