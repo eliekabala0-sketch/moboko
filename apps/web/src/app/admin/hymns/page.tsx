@@ -1,4 +1,4 @@
-import { createHymnAction, deleteHymnAction, updateHymnAction } from "@/app/admin/hymns/actions";
+import { createHymnAction, deleteHymnAction, importHymnBookAction, updateHymnAction } from "@/app/admin/hymns/actions";
 import { requireAdmin } from "@/lib/admin/require-admin";
 
 export const metadata = {
@@ -9,8 +9,12 @@ export default async function AdminHymnsPage() {
   const { supabase } = await requireAdmin();
   const { data: hymns } = await supabase
     .from("hymns")
-    .select("id, title, slug, number, category, lyrics, is_published")
-    .order("title", { ascending: true });
+    .select("id, title, slug, number, category, lyrics, is_published, book_id, hymn_books ( name )")
+    .order("number", { ascending: true });
+  const { data: books } = await supabase
+    .from("hymn_books")
+    .select("id, name, slug, is_published")
+    .order("name", { ascending: true });
 
   return (
     <main>
@@ -21,9 +25,38 @@ export default async function AdminHymnsPage() {
         Cantiques
       </h1>
 
+      <form action={importHymnBookAction} className="moboko-card mt-8 grid gap-4 p-5">
+        <h2 className="text-lg font-semibold text-[var(--foreground)]">Importer un livre complet</h2>
+        <div className="grid gap-4 md:grid-cols-[1fr_1fr]">
+          <label className="text-sm font-medium text-[var(--foreground)]">
+            Nom du livre
+            <input name="book_name" required className="moboko-input mt-2" placeholder="Ex. Cantiques de la Foi" />
+          </label>
+          <label className="text-sm font-medium text-[var(--foreground)]">
+            Description
+            <input name="description" className="moboko-input mt-2" />
+          </label>
+        </div>
+        <label className="text-sm font-medium text-[var(--foreground)]">
+          Texte du livre
+          <textarea
+            name="book_text"
+            required
+            rows={14}
+            className="moboko-input mt-2 resize-y"
+            placeholder={"1 Titre du cantique\nPremier couplet...\n\nRefrain: ...\n\n2 Autre cantique\n..."}
+          />
+        </label>
+        <label className="flex items-center gap-2 text-sm text-[var(--foreground)]">
+          <input name="is_published" type="checkbox" defaultChecked className="h-4 w-4" />
+          Publier le livre et les cantiques importes
+        </label>
+        <button className="moboko-btn-primary w-fit px-6 py-3 text-sm">Importer le livre</button>
+      </form>
+
       <form action={createHymnAction} className="moboko-card mt-8 grid gap-4 p-5">
         <h2 className="text-lg font-semibold text-[var(--foreground)]">Ajouter un cantique</h2>
-        <div className="grid gap-4 md:grid-cols-[0.5fr_1fr_1fr]">
+        <div className="grid gap-4 md:grid-cols-[0.5fr_1fr_1fr_1fr]">
           <label className="text-sm font-medium text-[var(--foreground)]">
             Numero
             <input name="number" className="moboko-input mt-2" />
@@ -35,6 +68,17 @@ export default async function AdminHymnsPage() {
           <label className="text-sm font-medium text-[var(--foreground)]">
             Categorie
             <input name="category" className="moboko-input mt-2" />
+          </label>
+          <label className="text-sm font-medium text-[var(--foreground)]">
+            Livre
+            <select name="book_id" className="moboko-input mt-2">
+              <option value="">Sans livre</option>
+              {(books ?? []).map((book) => (
+                <option key={book.id} value={book.id as string}>
+                  {book.name as string}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
         <label className="text-sm font-medium text-[var(--foreground)]">
@@ -53,7 +97,7 @@ export default async function AdminHymnsPage() {
           <article key={hymn.id} className="moboko-card p-5">
             <form action={updateHymnAction} className="grid gap-4">
               <input type="hidden" name="id" value={hymn.id as string} />
-              <div className="grid gap-4 md:grid-cols-[0.5fr_1fr_1fr]">
+              <div className="grid gap-4 md:grid-cols-[0.5fr_1fr_1fr_1fr]">
                 <label className="text-sm font-medium text-[var(--foreground)]">
                   Numero
                   <input name="number" defaultValue={(hymn.number as string | null) ?? ""} className="moboko-input mt-2" />
@@ -65,6 +109,17 @@ export default async function AdminHymnsPage() {
                 <label className="text-sm font-medium text-[var(--foreground)]">
                   Categorie
                   <input name="category" defaultValue={(hymn.category as string | null) ?? ""} className="moboko-input mt-2" />
+                </label>
+                <label className="text-sm font-medium text-[var(--foreground)]">
+                  Livre
+                  <select name="book_id" defaultValue={(hymn.book_id as string | null) ?? ""} className="moboko-input mt-2">
+                    <option value="">Sans livre</option>
+                    {(books ?? []).map((book) => (
+                      <option key={book.id} value={book.id as string}>
+                        {book.name as string}
+                      </option>
+                    ))}
+                  </select>
                 </label>
               </div>
               <label className="text-sm font-medium text-[var(--foreground)]">

@@ -1,4 +1,5 @@
 import { Masthead } from "@/components/layout/Masthead";
+import { fetchPublicAppSettings } from "@/lib/data/public-app-settings";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -28,6 +29,12 @@ export default async function SupportPage({
   searchParams: Promise<{ sent?: string; error?: string }>;
 }) {
   const sp = await searchParams;
+  const settings = await fetchPublicAppSettings();
+  const amounts = settings.supportSuggestedAmounts
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .slice(0, 8);
   return (
     <div className="flex min-h-full flex-col">
       <Masthead />
@@ -44,6 +51,32 @@ export default async function SupportPage({
         <Link href="/billing" className="moboko-btn-primary mt-6 inline-flex px-6 py-3 text-sm">
           Abonnement et crédits
         </Link>
+        {amounts.length > 0 || settings.supportTeamContact ? (
+          <div className="moboko-card mt-6 p-5">
+            {amounts.length > 0 ? (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
+                  Montants proposes
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {amounts.map((amount) => (
+                    <span
+                      key={amount}
+                      className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm font-semibold text-[var(--foreground)]"
+                    >
+                      {amount}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {settings.supportTeamContact ? (
+              <p className="mt-4 text-sm text-[var(--muted)]">
+                Contact : <span className="text-[var(--foreground)]">{settings.supportTeamContact}</span>
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         {sp.sent ? (
           <p className="moboko-card mt-6 border-[var(--success)]/30 bg-[var(--success-soft)] p-4 text-sm text-[var(--success)]">
             Message envoyé.

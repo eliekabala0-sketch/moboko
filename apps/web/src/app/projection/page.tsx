@@ -1,4 +1,4 @@
-import { Masthead } from "@/components/layout/Masthead";
+﻿import { Masthead } from "@/components/layout/Masthead";
 import { ProjectionReader } from "@/components/projection/ProjectionReader";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import Link from "next/link";
@@ -72,7 +72,7 @@ export default async function ProjectionPage({ searchParams }: Props) {
         [sermon.city, sermon.country].filter(Boolean).join(", ") || sermon.location,
       ]
         .filter(Boolean)
-        .join(" · ");
+        .join(" Â· ");
 
       return (
         <ProjectionReader
@@ -95,26 +95,39 @@ export default async function ProjectionPage({ searchParams }: Props) {
   if (supabase && kind === "hymn" && sp.hymn) {
     const { data: hymn } = await supabase
       .from("hymns")
-      .select("slug, title, number, category, lyrics")
+      .select("slug, title, number, category, lyrics, verses, chorus, hymn_books ( name )")
       .eq("slug", sp.hymn)
       .eq("is_published", true)
       .maybeSingle();
 
     if (hymn?.lyrics) {
+      const verses = Array.isArray(hymn.verses)
+        ? (hymn.verses.filter((v) => typeof v === "string") as string[])
+        : [];
+      const chorus = typeof hymn.chorus === "string" && hymn.chorus.trim() ? hymn.chorus.trim() : null;
+      const units =
+        verses.length > 0
+          ? verses.flatMap((verse, index) => {
+              const out = [{ id: `v-${index + 1}`, label: `Couplet ${index + 1}`, text: verse }];
+              if (chorus) out.push({ id: `c-${index + 1}`, label: "Refrain", text: chorus });
+              return out;
+            })
+          : [
+              {
+                id: hymn.slug as string,
+                label: hymn.number ? `Cantique ${hymn.number}` : "Cantique",
+                text: hymn.lyrics as string,
+              },
+            ];
+      const hymnBook = Array.isArray(hymn.hymn_books) ? hymn.hymn_books[0] : hymn.hymn_books;
       return (
         <ProjectionReader
           title={hymn.title as string}
-          metaLine={[hymn.number, hymn.category].filter(Boolean).join(" · ")}
+          metaLine={[hymnBook?.name, hymn.number, hymn.category].filter(Boolean).join(" · ")}
           backHref="/projection?kind=hymn"
           backLabel="Projection"
           startHref={`/projection?kind=hymn&hymn=${encodeURIComponent(hymn.slug as string)}`}
-          units={[
-            {
-              id: hymn.slug as string,
-              label: hymn.number ? `Cantique ${hymn.number}` : "Cantique",
-              text: hymn.lyrics as string,
-            },
-          ]}
+          units={units}
         />
       );
     }
@@ -132,7 +145,10 @@ export default async function ProjectionPage({ searchParams }: Props) {
     title: string;
     number: string | null;
     category: string | null;
+    book_id: string | null;
+    hymn_books?: { name?: string | null } | { name?: string | null }[] | null;
   }[] = [];
+  let hymnBooks: { id: string; name: string; slug: string }[] = [];
   let bibleRows: {
     book: string;
     chapter: number;
@@ -155,13 +171,22 @@ export default async function ProjectionPage({ searchParams }: Props) {
     });
     sermons = (sermonData ?? []) as typeof sermons;
 
-    const { data: hymnData } = await supabase
-      .from("hymns")
-      .select("slug, title, number, category")
+    const { data: bookData } = await supabase
+      .from("hymn_books")
+      .select("id, name, slug")
       .eq("is_published", true)
-      .or(q ? `title.ilike.%${q.replace(/[%_,]/g, "")}%,number.ilike.%${q.replace(/[%_,]/g, "")}%` : "is_published.eq.true")
-      .order("title", { ascending: true })
+      .order("name", { ascending: true });
+    hymnBooks = (bookData ?? []) as typeof hymnBooks;
+
+    let hymnQuery = supabase
+      .from("hymns")
+      .select("slug, title, number, category, book_id, hymn_books ( name )")
+      .eq("is_published", true)
       .limit(18);
+    const selectedHymnBook = clean(sp.book);
+    if (selectedHymnBook) hymnQuery = hymnQuery.eq("book_id", selectedHymnBook);
+    if (q) hymnQuery = hymnQuery.or(`title.ilike.%${q.replace(/[%_,]/g, "")}%,number.ilike.%${q.replace(/[%_,]/g, "")}%`);
+    const { data: hymnData } = await hymnQuery.order("number", { ascending: true });
     hymns = (hymnData ?? []) as typeof hymns;
 
     const book = clean(sp.book);
@@ -272,7 +297,7 @@ export default async function ProjectionPage({ searchParams }: Props) {
                   <div>
                     <h2 className="font-display text-xl font-semibold text-[var(--foreground)]">{s.title}</h2>
                     <p className="mt-1 text-xs text-[var(--muted)]">
-                      {[s.preached_on, s.year, s.location].filter(Boolean).join(" · ")}
+                      {[s.preached_on, s.year, s.location].filter(Boolean).join(" Â· ")}
                     </p>
                   </div>
                   <form className="flex flex-wrap items-end gap-2">
@@ -334,21 +359,41 @@ export default async function ProjectionPage({ searchParams }: Props) {
 
         {kind === "hymn" ? (
           <section className="mt-8">
-            <form className="moboko-card grid gap-4 p-5 md:grid-cols-[1fr_auto]">
+            <form className="moboko-card grid gap-4 p-5 md:grid-cols-[1fr_1fr_auto]">
               <input type="hidden" name="kind" value="hymn" />
               <label className="text-sm font-medium text-[var(--foreground)]">
+                Livre
+                <select name="book" defaultValue={sp.book ?? ""} className="moboko-input mt-2">
+                  <option value="">Tous les livres</option>
+                  {hymnBooks.map((book) => (
+                    <option key={book.id} value={book.id}>
+                      {book.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm font-medium text-[var(--foreground)]">
                 Titre ou numero
-                <input name="q" defaultValue={q} className="moboko-input mt-2" />
+                <input name="q" defaultValue={q} list="projection-hymns" className="moboko-input mt-2" />
               </label>
               <button className="moboko-btn-primary self-end px-5 py-3 text-sm">Chercher</button>
             </form>
+            <datalist id="projection-hymns">
+              {hymns.map((h) => (
+                <option key={h.slug} value={h.number ? `${h.number} ${h.title}` : h.title} />
+              ))}
+            </datalist>
             <div className="mt-5 grid gap-3">
               {hymns.map((h) => (
                 <article key={h.slug} className="moboko-card flex flex-wrap items-center justify-between gap-4 p-4">
                   <div>
                     <h2 className="font-display text-xl font-semibold text-[var(--foreground)]">{h.title}</h2>
                     <p className="mt-1 text-xs text-[var(--muted)]">
-                      {[h.number, h.category].filter(Boolean).join(" · ")}
+                      {[
+                        Array.isArray(h.hymn_books) ? h.hymn_books[0]?.name : h.hymn_books?.name,
+                        h.number,
+                        h.category,
+                      ].filter(Boolean).join(" Â· ")}
                     </p>
                   </div>
                   <Link

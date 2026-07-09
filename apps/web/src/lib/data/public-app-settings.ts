@@ -60,6 +60,10 @@ function rowToPartial(
         subscriptionMonthlyAiCredits:
           typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0,
       };
+    case PUBLIC_APP_SETTING_KEYS.supportSuggestedAmounts:
+      return { supportSuggestedAmounts: v == null ? "5,10,25,50" : String(v) };
+    case PUBLIC_APP_SETTING_KEYS.supportTeamContact:
+      return { supportTeamContact: v == null ? "" : String(v) };
     default:
       return {};
   }

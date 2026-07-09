@@ -25,16 +25,74 @@ function slugify(input: string) {
     .slice(0, 90);
 }
 
+function splitHymnText(raw: string): { verses: string[]; chorus: string | null } {
+  const blocks = raw
+    .split(/\r?\n\s*\r?\n/g)
+    .map((block) => block.trim())
+    .filter(Boolean);
+  let chorus: string | null = null;
+  const verses: string[] = [];
+  for (const block of blocks) {
+    if (/^(refrain|choeur|chœur|chorus)\s*[:.-]?/i.test(block.trim())) {
+      chorus = block;
+    } else {
+      verses.push(block);
+    }
+  }
+  return { verses, chorus };
+}
+
+function parseHymnBook(raw: string): { number: string; title: string; lyrics: string; verses: string[]; chorus: string | null }[] {
+  const lines = raw.replace(/\r\n/g, "\n").split("\n");
+  const starts: { index: number; number: string; title: string }[] = [];
+  const heading = /^\s*(?:n[°o.]?\s*)?(\d{1,4})\s*(?:[.):-]|\s+-\s+)?\s+(.+?)\s*$/i;
+  for (let i = 0; i < lines.length; i += 1) {
+    const m = lines[i]?.match(heading);
+    if (!m) continue;
+    const title = (m[2] ?? "").trim();
+    if (title.length < 2) continue;
+    starts.push({ index: i, number: m[1] ?? "", title });
+  }
+  const hymns = [];
+  for (let i = 0; i < starts.length; i += 1) {
+    const current = starts[i]!;
+    const next = starts[i + 1]?.index ?? lines.length;
+    const body = lines.slice(current.index + 1, next).join("\n").trim();
+    if (!body) continue;
+    const split = splitHymnText(body);
+    hymns.push({
+      number: current.number,
+      title: current.title,
+      lyrics: body,
+      verses: split.verses,
+      chorus: split.chorus,
+    });
+  }
+  return hymns;
+}
+
 function readForm(formData: FormData) {
   const title = String(formData.get("title") ?? "").trim();
   const number = String(formData.get("number") ?? "").trim() || null;
   const category = String(formData.get("category") ?? "").trim() || null;
+  const bookId = String(formData.get("book_id") ?? "").trim() || null;
   const lyrics = String(formData.get("lyrics") ?? "").trim();
   const isPublished = formData.get("is_published") === "on";
   if (!title) throw new Error("Titre requis");
   if (!lyrics) throw new Error("Texte requis");
   const slugBase = number ? `${number}-${title}` : title;
-  return { title, number, category, lyrics, is_published: isPublished, slug: slugify(slugBase) || slugify(title) };
+  const split = splitHymnText(lyrics);
+  return {
+    title,
+    number,
+    category,
+    book_id: bookId,
+    lyrics,
+    verses: split.verses as never,
+    chorus: split.chorus,
+    is_published: isPublished,
+    slug: slugify(slugBase) || slugify(title),
+  };
 }
 
 export async function createHymnAction(formData: FormData) {
@@ -62,6 +120,43 @@ export async function deleteHymnAction(formData: FormData) {
   const id = String(formData.get("id") ?? "").trim();
   if (!id) throw new Error("Cantique introuvable");
   const { error } = await supabase.from("hymns").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+  revalidatePath("/admin/hymns");
+  revalidatePath("/projection");
+}
+
+export async function importHymnBookAction(formData: FormData) {
+  const { supabase } = await adminSession();
+  const name = String(formData.get("book_name") ?? "").trim();
+  const description = String(formData.get("description") ?? "").trim() || null;
+  const raw = String(formData.get("book_text") ?? "").trim();
+  const isPublished = formData.get("is_published") === "on";
+  if (!name) throw new Error("Nom du livre requis");
+  if (!raw) throw new Error("Texte du livre requis");
+  const parsed = parseHymnBook(raw);
+  if (parsed.length === 0) throw new Error("Aucun cantique numerote detecte");
+  const bookSlug = slugify(name);
+  const { data: book, error: bookErr } = await supabase
+    .from("hymn_books")
+    .upsert(
+      { name, slug: bookSlug, description, is_published: isPublished },
+      { onConflict: "slug" },
+    )
+    .select("id")
+    .single();
+  if (bookErr || !book?.id) throw new Error(bookErr?.message ?? "Livre introuvable");
+  const rows = parsed.map((h) => ({
+    book_id: book.id as string,
+    title: h.title,
+    number: h.number,
+    category: name,
+    lyrics: h.lyrics,
+    verses: h.verses as never,
+    chorus: h.chorus,
+    is_published: isPublished,
+    slug: slugify(`${bookSlug}-${h.number}-${h.title}`),
+  }));
+  const { error } = await supabase.from("hymns").upsert(rows, { onConflict: "slug" });
   if (error) throw new Error(error.message);
   revalidatePath("/admin/hymns");
   revalidatePath("/projection");

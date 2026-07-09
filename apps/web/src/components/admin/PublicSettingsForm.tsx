@@ -54,6 +54,12 @@ export function PublicSettingsForm({ initial }: Props) {
   const [subscriptionCredits, setSubscriptionCredits] = useState(
     Number(initial[PUBLIC_APP_SETTING_KEYS.subscriptionMonthlyAiCredits] ?? 0),
   );
+  const [supportAmounts, setSupportAmounts] = useState(
+    String(initial[PUBLIC_APP_SETTING_KEYS.supportSuggestedAmounts] ?? "5,10,25,50"),
+  );
+  const [supportContact, setSupportContact] = useState(
+    String(initial[PUBLIC_APP_SETTING_KEYS.supportTeamContact] ?? ""),
+  );
 
   function save() {
     setErr(null);
@@ -74,6 +80,8 @@ export function PublicSettingsForm({ initial }: Props) {
           [PUBLIC_APP_SETTING_KEYS.sermonAiSearchCreditCost]: Math.max(0, Math.floor(sermonAiCost)),
           [PUBLIC_APP_SETTING_KEYS.freeNormalSearchesPerMonth]: Math.max(0, Math.floor(freeSearches)),
           [PUBLIC_APP_SETTING_KEYS.subscriptionMonthlyAiCredits]: Math.max(0, Math.floor(subscriptionCredits)),
+          [PUBLIC_APP_SETTING_KEYS.supportSuggestedAmounts]: supportAmounts,
+          [PUBLIC_APP_SETTING_KEYS.supportTeamContact]: supportContact,
         });
         setMessage("Paramètres enregistrés.");
         router.refresh();
@@ -239,6 +247,35 @@ export function PublicSettingsForm({ initial }: Props) {
             />
             <span className="text-sm text-[var(--foreground)]">Recherche intelligente (IA) sur les sermons</span>
           </label>
+        </div>
+
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
+            Soutien
+          </p>
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            <label className="text-sm font-medium text-[var(--foreground)]">
+              <span className="text-[var(--muted)]">Montants proposes</span>
+              <input
+                value={supportAmounts}
+                onChange={(e) => setSupportAmounts(e.target.value)}
+                className="moboko-input mt-2"
+                placeholder="5,10,25,50"
+              />
+              <span className="mt-1.5 block text-[11px] font-normal leading-relaxed text-[var(--muted)]">
+                Liste separee par virgules.
+              </span>
+            </label>
+            <label className="text-sm font-medium text-[var(--foreground)]">
+              <span className="text-[var(--muted)]">Contact equipe</span>
+              <input
+                value={supportContact}
+                onChange={(e) => setSupportContact(e.target.value)}
+                className="moboko-input mt-2"
+                placeholder="contact@..."
+              />
+            </label>
+          </div>
         </div>
 
         <button

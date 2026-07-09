@@ -26,6 +26,14 @@ export default async function RequestsPage({
   searchParams: Promise<{ sent?: string; error?: string }>;
 }) {
   const sp = await searchParams;
+  const supabase = await createSupabaseServerClient();
+  const { count } = supabase
+    ? await supabase
+        .from("prayer_requests")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "reviewed")
+        .eq("is_public", true)
+    : { count: 0 };
   return (
     <div className="flex min-h-full flex-col">
       <Masthead />
@@ -39,6 +47,11 @@ export default async function RequestsPage({
         <p className="mt-3 text-sm leading-relaxed text-[var(--muted)]">
           Envoyez une requête à l&apos;équipe. Elle sera traitée avec discrétion.
         </p>
+        {count && count > 0 ? (
+          <p className="moboko-card mt-6 border-[var(--accent)]/30 bg-[var(--accent-soft)] p-4 text-sm text-[var(--foreground)]">
+            {count} requête{count > 1 ? "s" : ""} validée{count > 1 ? "s" : ""} actuellement portée{count > 1 ? "s" : ""} en prière.
+          </p>
+        ) : null}
         {sp.sent ? (
           <p className="moboko-card mt-6 border-[var(--success)]/30 bg-[var(--success-soft)] p-4 text-sm text-[var(--success)]">
             Requête envoyée.

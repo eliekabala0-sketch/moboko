@@ -19,6 +19,8 @@ export const PUBLIC_APP_SETTING_KEYS = {
   sermonAiSearchCreditCost: "sermon_ai_search_credit_cost",
   freeNormalSearchesPerMonth: "free_normal_searches_per_month",
   subscriptionMonthlyAiCredits: "subscription_monthly_ai_credits",
+  supportSuggestedAmounts: "support_suggested_amounts",
+  supportTeamContact: "support_team_contact",
 } as const;
 
 /** Liste alignée sur `app_setting_is_public_readable` côté SQL. */
@@ -53,6 +55,8 @@ export type PublicHomePageSettings = {
   sermonAiSearchCreditCost: number;
   freeNormalSearchesPerMonth: number;
   subscriptionMonthlyAiCredits: number;
+  supportSuggestedAmounts: string;
+  supportTeamContact: string;
 };
 
 export const defaultPublicHomePageSettings: PublicHomePageSettings = {
@@ -70,4 +74,6 @@ export const defaultPublicHomePageSettings: PublicHomePageSettings = {
   sermonAiSearchCreditCost: 2,
   freeNormalSearchesPerMonth: 20,
   subscriptionMonthlyAiCredits: 0,
+  supportSuggestedAmounts: "5,10,25,50",
+  supportTeamContact: "",
 };
