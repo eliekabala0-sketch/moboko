@@ -145,6 +145,26 @@ async function main() {
   console.log("credits_charged:", j.credits_charged ?? null);
   console.log("balance_after:", j.balance_after ?? null);
 
+  const { data: assistantRows, error: msgErr } = await admin
+    .from("messages")
+    .select("role, content, metadata")
+    .eq("conversation_id", conv.id)
+    .eq("role", "assistant")
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (msgErr) {
+    console.log("assistant_message_read_error:", msgErr.message);
+  } else {
+    const metadata = assistantRows?.[0]?.metadata ?? {};
+    const results = Array.isArray(metadata.results) ? metadata.results : [];
+    console.log("assistant_moboko_kind:", metadata.moboko_kind ?? null);
+    console.log("assistant_moboko_tool:", metadata.moboko_tool ?? null);
+    console.log("assistant_results_count:", results.length);
+    console.log("assistant_total_count:", metadata.total_count ?? null);
+    console.log("assistant_first_slug:", results[0]?.slug ?? null);
+    console.log("assistant_first_paragraph_number:", results[0]?.paragraph_number ?? null);
+  }
+
   const dbg = j.moboko_debug_chat_openai;
   if (dbg && typeof dbg === "object") {
     console.log("");
