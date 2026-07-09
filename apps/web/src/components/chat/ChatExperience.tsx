@@ -8,7 +8,7 @@ import {
   parseAppSettingScalar,
   type PublicHomePageSettings,
 } from "@moboko/shared";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Composer } from "./Composer";
 import { mapRowToUiMessage, MessageList, type UiMessage } from "./MessageList";
 import Link from "next/link";
@@ -112,6 +112,7 @@ export function ChatExperience({ userId }: Props) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const conversationHistory = useMemo(() => {
     return messages
@@ -216,6 +217,10 @@ export function ChatExperience({ userId }: Props) {
       cancelled = true;
     };
   }, [userId, supabase, loadFlags, loadWallet, loadMessages]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ block: "end" });
+  }, [messages.length, busy]);
 
   async function handleSendText(t: string) {
     if (!conversationId) return;
@@ -401,7 +406,7 @@ export function ChatExperience({ userId }: Props) {
           </div>
         ) : null}
         <div className="custom-scrollbar flex-1 overflow-y-auto px-3 pb-36 pt-3 sm:px-6">
-          <div className="mx-auto w-full max-w-3xl">
+          <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-end">
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center px-4 py-20 text-center">
                 <p className="font-display text-lg text-[var(--foreground)]">Nouvelle discussion</p>
@@ -412,6 +417,10 @@ export function ChatExperience({ userId }: Props) {
             ) : (
               <MessageList messages={messages} conversationId={conversationId} />
             )}
+            {busy ? (
+              <p className="px-2 pb-3 text-xs text-[var(--muted)]">Recherche des sources...</p>
+            ) : null}
+            <div ref={bottomRef} />
           </div>
         </div>
         <div className="fixed bottom-0 left-0 right-0 z-40 lg:left-[17rem]">

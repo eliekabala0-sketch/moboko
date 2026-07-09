@@ -4,9 +4,13 @@ import Link from "next/link";
 
 const nav = [
   { href: "/chat", label: "Assistant" },
-  { href: "/posts", label: "Enseignements" },
   { href: "/sermons", label: "Sermons" },
   { href: "/projection", label: "Projection" },
+  { href: "/posts", label: "Enseignements" },
+  { href: "/requests", label: "Requêtes" },
+  { href: "/testimonies", label: "Témoignages" },
+  { href: "/support", label: "Soutien" },
+  { href: "/billing", label: "Abonnement" },
 ];
 
 export async function Masthead() {
@@ -90,6 +94,25 @@ export async function Masthead() {
           )}
         </div>
       </div>
+      <nav className="custom-scrollbar flex gap-2 overflow-x-auto border-t border-[var(--border)] px-4 py-2 text-xs font-semibold text-[var(--muted)] sm:hidden">
+        {nav.map((item) => (
+          <Link
+            key={item.href}
+            href={item.href}
+            className="shrink-0 rounded-full border border-[var(--border)] bg-[var(--surface)]/70 px-3 py-1.5 transition hover:border-[var(--border-strong)] hover:text-[var(--foreground)]"
+          >
+            {item.label}
+          </Link>
+        ))}
+        {isAdmin ? (
+          <Link
+            href="/admin/settings"
+            className="shrink-0 rounded-full border border-[var(--border-strong)] bg-[var(--accent-soft)] px-3 py-1.5 text-[var(--accent)]"
+          >
+            Admin
+          </Link>
+        ) : null}
+      </nav>
     </header>
   );
 }

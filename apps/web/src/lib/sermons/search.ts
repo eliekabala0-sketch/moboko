@@ -48,6 +48,27 @@ export function buildParagraphExcerpt(
   return `${prefix}${slice}${suffix}`;
 }
 
+export function extractSearchTerms(searchQuery: string): string[] {
+  const q = searchQuery.trim();
+  if (!q) return [];
+  const quoted = Array.from(q.matchAll(/"([^"]{2,})"/g))
+    .map((m) => m[1]?.trim())
+    .filter((t): t is string => Boolean(t));
+  const words = q
+    .replace(/"([^"]*)"/g, " ")
+    .split(/\s+/)
+    .map((t) => t.replace(/^["']|["']$/g, "").trim())
+    .filter((t) => t.length > 1);
+  return Array.from(new Set([...quoted, ...words])).sort((a, b) => b.length - a.length);
+}
+
+export function paragraphMatchesQuery(paragraphText: string, searchQuery: string): boolean {
+  const terms = extractSearchTerms(searchQuery);
+  if (terms.length === 0) return true;
+  const lower = paragraphText.toLowerCase();
+  return terms.some((term) => lower.includes(term.toLowerCase()));
+}
+
 export type SermonListRow = {
   id: string;
   slug: string;

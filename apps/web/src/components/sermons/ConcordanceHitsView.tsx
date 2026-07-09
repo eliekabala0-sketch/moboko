@@ -2,12 +2,40 @@
 
 import type { ConcordanceHit } from "@/lib/sermons/concordance-types";
 import { coerceConcordanceHits, hitKey } from "@/lib/sermons/concordance-types";
+import { extractSearchTerms } from "@/lib/sermons/search";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 function clipPreview(text: string, max = 140): string {
   void max;
   return text;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function HighlightedText({ text, query }: { text: string; query?: string | null }) {
+  const terms = extractSearchTerms(query ?? "");
+  if (terms.length === 0) return <>{text}</>;
+  const pattern = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi");
+  const parts = text.split(pattern);
+  return (
+    <>
+      {parts.map((part, index) =>
+        terms.some((term) => part.toLowerCase() === term.toLowerCase()) ? (
+          <mark
+            key={`${part}-${index}`}
+            className="rounded-[3px] bg-[var(--accent-soft)] px-0.5 text-[var(--foreground)]"
+          >
+            {part}
+          </mark>
+        ) : (
+          <span key={`${part}-${index}`}>{part}</span>
+        ),
+      )}
+    </>
+  );
 }
 
 type Props = {
@@ -188,7 +216,7 @@ export function ConcordanceHitsView({
               Paragraphe trouvé §{selected.paragraph_number}
             </p>
             <p className="mt-2 whitespace-pre-wrap text-[15px] leading-relaxed text-[var(--foreground)]">
-              {selected.paragraph_text}
+              <HighlightedText text={selected.paragraph_text} query={selected._query} />
             </p>
           </div>
 
@@ -259,7 +287,9 @@ export function ConcordanceHitsView({
                 {h.location ? ` · ${h.location}` : ""}
                 {h.date ? ` · ${h.date}` : ""}
               </p>
-              <p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">{clipPreview(h.paragraph_text)}</p>
+              <p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">
+                <HighlightedText text={clipPreview(h.paragraph_text)} query={h._query} />
+              </p>
             </button>
           </li>
         );

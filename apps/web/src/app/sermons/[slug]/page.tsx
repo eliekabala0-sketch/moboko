@@ -1,20 +1,30 @@
 import { ScrollToSermonHash } from "@/components/sermons/ScrollToSermonHash";
 import { Masthead } from "@/components/layout/Masthead";
+import { consumeNormalSearchQuota } from "@/lib/billing/normal-search-quota";
+import { fetchPublicAppSettings } from "@/lib/data/public-app-settings";
+import { createSupabaseServiceClient } from "@/lib/supabase/service";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { paragraphMatchesQuery } from "@/lib/sermons/search";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-type Props = { params: Promise<{ slug: string }> };
+type Props = {
+  params: Promise<{ slug: string }>;
+  searchParams?: Promise<{ q?: string }>;
+};
 
 export async function generateMetadata({ params }: Props) {
   const { slug } = await params;
   return { title: `Sermon | ${slug} | Moboko` };
 }
 
-export default async function SermonDetailPage({ params }: Props) {
+export default async function SermonDetailPage({ params, searchParams }: Props) {
   const { slug } = await params;
+  const sp = searchParams ? await searchParams : {};
+  const q = sp.q?.trim() ?? "";
   const supabase = await createSupabaseServerClient();
   if (!supabase) notFound();
+  const pub = await fetchPublicAppSettings();
 
   const { data: sermon } = await supabase
     .from("sermons")
@@ -32,6 +42,40 @@ export default async function SermonDetailPage({ params }: Props) {
     .select("paragraph_number, paragraph_text")
     .eq("sermon_id", sermon.id)
     .order("paragraph_number", { ascending: true });
+
+  const allParagraphs = paragraphs ?? [];
+  let searchError: string | null = null;
+  let quotaLine: string | null = null;
+  if (q.length >= 2) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const admin = createSupabaseServiceClient();
+    if (!admin) {
+      searchError = "Service de quota indisponible.";
+    } else {
+      const quota = await consumeNormalSearchQuota(
+        admin,
+        user?.id ?? null,
+        pub.freeNormalSearchesPerMonth,
+      );
+      if (!quota.ok) {
+        searchError =
+          quota.error === "auth_required"
+            ? "Connectez-vous pour chercher dans ce sermon."
+            : "Limite mensuelle de recherches gratuites atteinte. Un abonnement actif donne un acces illimite.";
+      } else if (quota.subscriptionActive) {
+        quotaLine = "Abonnement actif : recherche normale illimitee.";
+      } else if (quota.remaining != null) {
+        quotaLine = `${quota.remaining} recherche${quota.remaining > 1 ? "s" : ""} gratuite${quota.remaining > 1 ? "s" : ""} restante${quota.remaining > 1 ? "s" : ""} ce mois-ci.`;
+      }
+    }
+  }
+
+  const searchActive = q.length >= 2 && !searchError;
+  const visibleParagraphs = searchActive
+    ? allParagraphs.filter((p) => paragraphMatchesQuery(p.paragraph_text, q))
+    : allParagraphs;
 
   const metaLine = [
     sermon.preached_on,
@@ -82,11 +126,52 @@ export default async function SermonDetailPage({ params }: Props) {
           </p>
         </div>
 
+        <form action={`/sermons/${encodeURIComponent(slug)}`} method="get" className="moboko-card mt-8 p-5 sm:p-6">
+          <label className="block text-sm font-medium text-[var(--foreground)]">
+            <span className="text-[var(--muted)]">Chercher dans ce sermon</span>
+            <input
+              name="q"
+              type="search"
+              defaultValue={q}
+              placeholder="Mot ou expression exacte"
+              className="moboko-input mt-2"
+              autoComplete="off"
+            />
+          </label>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button type="submit" className="moboko-btn-primary px-5 py-2.5 text-[13px]">
+              Rechercher
+            </button>
+            {q ? (
+              <Link
+                href={`/sermons/${encodeURIComponent(slug)}`}
+                className="inline-flex items-center rounded-full border border-[var(--border)] px-5 py-2.5 text-[13px] font-semibold text-[var(--muted)] transition hover:border-[var(--border-strong)] hover:text-[var(--foreground)]"
+              >
+                Effacer
+              </Link>
+            ) : null}
+          </div>
+          {q.length > 0 && q.length < 2 ? (
+            <p className="mt-3 text-xs text-[var(--muted)]">Saisissez au moins 2 caracteres.</p>
+          ) : null}
+          {quotaLine ? <p className="mt-3 text-xs text-[var(--muted)]">{quotaLine}</p> : null}
+          {searchError ? <p className="mt-3 text-sm text-[var(--danger)]">{searchError}</p> : null}
+          {searchActive ? (
+            <p className="mt-3 text-xs text-[var(--muted)]">
+              {visibleParagraphs.length} paragraphe{visibleParagraphs.length > 1 ? "s" : ""} trouve{visibleParagraphs.length > 1 ? "s" : ""}.
+            </p>
+          ) : null}
+        </form>
+
         <div className="mt-10 space-y-6">
-          {(paragraphs ?? []).length === 0 ? (
+          {allParagraphs.length === 0 ? (
             <p className="text-sm text-[var(--muted)]">Aucun paragraphe structuré pour ce fichier.</p>
+          ) : visibleParagraphs.length === 0 ? (
+            <p className="moboko-card p-6 text-sm text-[var(--muted)]">
+              Aucun paragraphe ne correspond a cette recherche dans ce sermon.
+            </p>
           ) : (
-            (paragraphs ?? []).map((p) => (
+            visibleParagraphs.map((p) => (
               <section
                 key={p.paragraph_number}
                 className="moboko-card scroll-mt-24 p-5 sm:p-6"
