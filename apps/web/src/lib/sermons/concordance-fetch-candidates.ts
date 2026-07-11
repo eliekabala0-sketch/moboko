@@ -83,51 +83,33 @@ export async function fetchConcordanceSemanticCandidates(
     query,
   ]).filter((qStr) => !isShallowBaitOnly(qStr, bait));
 
-  const maxQueries = profile === "library" ? 28 : 26;
   const MAX_CANDIDATES = profile === "library" ? 1200 : 900;
-  const firstWave = profile === "library" ? 8 : 6;
-  const secondStart = profile === "library" ? 8 : 6;
-  const secondEnd = profile === "library" ? 18 : 16;
-  const break1 = profile === "library" ? 380 : 320;
-  const break2 = profile === "library" ? 900 : 700;
-  const break1b = profile === "library" ? 800 : 620;
-  const break2b = profile === "library" ? 900 : 700;
-
+  const maxQueries = profile === "library" ? 12 : 10;
   const queries = candidatesRaw.slice(0, maxQueries);
   const byKey = new Map<string, SermonParagraphCandidate>();
-  const collect = async (qStr: string) => {
-    const rows = await fetchSermonSearchCandidates(admin, qStr);
-    for (const c of rows) {
-      if (restrict && c.slug !== restrict) continue;
-      const k = `${c.slug}:${c.paragraph_number}`;
-      if (!byKey.has(k)) byKey.set(k, c);
-      if (byKey.size >= MAX_CANDIDATES) break;
-    }
-  };
 
-  for (const qStr of queries.slice(0, firstWave)) {
-    await collect(qStr);
-    if (byKey.size >= break1) break;
-  }
-  if (byKey.size < break1b) {
-    for (const qStr of queries.slice(secondStart, secondEnd)) {
-      await collect(qStr);
-      if (byKey.size >= break2) break;
-    }
-  }
-  if (byKey.size < break2b) {
-    const broad = dedupeQueries([
-      semantic?.intent ?? "",
-      semantic?.topic ?? "",
-      ...(semantic?.concepts ?? []).slice(0, 5),
-    ])
-      .filter((x) => x.length >= 4 && !isShallowBaitOnly(x, bait))
-      .join(" ");
-    if (broad.trim().length >= 4 && !isShallowBaitOnly(broad, bait)) await collect(broad);
-    for (const qStr of queries.slice(secondEnd)) {
-      await collect(qStr);
-      if (byKey.size >= MAX_CANDIDATES) break;
-    }
+  const primary = queries[0] ?? query;
+  const broad = dedupeQueries([
+    semantic?.intent ?? "",
+    semantic?.topic ?? "",
+    ...(semantic?.concepts ?? []).slice(0, 5),
+  ])
+    .filter((x) => x.length >= 4 && !isShallowBaitOnly(x, bait))
+    .join(" ");
+  const packedQueries = broad ? [...queries, broad] : queries;
+  const rows = await fetchSermonSearchCandidates(admin, primary, {
+    queries: packedQueries.slice(1),
+    sermonSlug: restrict,
+    yearFrom: semantic?.year_from ?? null,
+    yearTo: semantic?.year_to ?? null,
+    limit: MAX_CANDIDATES,
+  });
+
+  for (const c of rows) {
+    if (restrict && c.slug !== restrict) continue;
+    const k = `${c.slug}:${c.paragraph_number}`;
+    if (!byKey.has(k)) byKey.set(k, c);
+    if (byKey.size >= MAX_CANDIDATES) break;
   }
 
   let out = Array.from(byKey.values());

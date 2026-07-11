@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { fastRowsToCandidates, fetchFastSermonSearch } from "@/lib/sermons/fast-search";
 import { sanitizeLikePattern } from "@/lib/sermons/search";
 import { sortSermonOccurrencesOldestFirst } from "@/lib/sermons/source-order";
 
@@ -10,6 +11,10 @@ export type SermonParagraphCandidate = {
   location: string | null;
   paragraph_number: number;
   paragraph_text: string;
+  prev_paragraph_number?: number | null;
+  prev_paragraph_text?: string | null;
+  next_paragraph_number?: number | null;
+  next_paragraph_text?: string | null;
 };
 
 const FR_STOP = new Set([
@@ -198,7 +203,30 @@ export function clipForPrompt(text: string, max = 520) {
 export async function fetchSermonSearchCandidates(
   admin: SupabaseClient,
   query: string,
+  opts: {
+    queries?: string[];
+    sermonSlug?: string | null;
+    yearFrom?: number | null;
+    yearTo?: number | null;
+    limit?: number;
+  } = {},
 ): Promise<SermonParagraphCandidate[]> {
+  const fast = await fetchFastSermonSearch(admin, query, {
+    queries: opts.queries,
+    sermonSlug: opts.sermonSlug,
+    limit: opts.limit ?? 360,
+    offset: 0,
+  });
+  if (fast) {
+    let out = fastRowsToCandidates(fast.rows);
+    if (opts.yearFrom != null || opts.yearTo != null) {
+      const minY = opts.yearFrom ?? 1900;
+      const maxY = opts.yearTo ?? 2100;
+      out = out.filter((c) => c.year == null || (c.year >= minY && c.year <= maxY));
+    }
+    return out.slice(0, opts.limit ?? 360);
+  }
+
   const seen = new Set<string>();
   const acc: SermonParagraphCandidate[] = [];
 
@@ -323,5 +351,12 @@ export async function fetchSermonSearchCandidates(
     }
   }
 
-  return sortSermonOccurrencesOldestFirst(acc).slice(0, 360);
+  let out = sortSermonOccurrencesOldestFirst(acc);
+  if (opts.sermonSlug) out = out.filter((c) => c.slug === opts.sermonSlug);
+  if (opts.yearFrom != null || opts.yearTo != null) {
+    const minY = opts.yearFrom ?? 1900;
+    const maxY = opts.yearTo ?? 2100;
+    out = out.filter((c) => c.year == null || (c.year >= minY && c.year <= maxY));
+  }
+  return out.slice(0, opts.limit ?? 360);
 }

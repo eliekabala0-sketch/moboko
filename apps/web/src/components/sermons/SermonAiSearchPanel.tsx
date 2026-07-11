@@ -57,13 +57,8 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
           setErr("La recherche IA sur les sermons est désactivée pour le moment.");
           setErrAction(null);
         } else {
-          const detail =
-            typeof data.detail === "string"
-              ? data.detail
-              : typeof data.error === "string"
-                ? data.error
-                : "Une erreur est survenue.";
-          setErr(detail);
+          void data;
+          setErr("La recherche assistee est temporairement indisponible.");
           setErrAction(null);
         }
         return;

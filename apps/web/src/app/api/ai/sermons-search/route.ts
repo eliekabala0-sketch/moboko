@@ -17,7 +17,16 @@ export const maxDuration = 90;
 
 type Body = { query?: string; offset?: number; pageSize?: number };
 const CONCORDANCE_PAGE_SIZE = 20;
-const EMPTY_CONCORDANCE_MESSAGE = "Aucun paragraphe exact trouvé pour cette recherche.";
+const EMPTY_CONCORDANCE_MESSAGE = "Aucun passage correspondant n'a ete trouve.";
+
+function aiLog(event: string, meta: Record<string, unknown> = {}) {
+  if (process.env.MOBOKO_ASSISTANT_AI_DEBUG !== "1") return;
+  console.log(`[assistant-ai] ${event}`, meta);
+}
+
+function diagnosticsEnabled(request: Request) {
+  return request.headers.get("x-moboko-diagnostics") === "1";
+}
 
 function parseBody(raw: unknown): { query: string; offset: number; pageSize: number } | null {
   if (!raw || typeof raw !== "object") return null;
@@ -58,8 +67,21 @@ function toPagedHits(
 }
 
 export async function POST(request: Request) {
+  const startedAt = Date.now();
+  const includeDiagnostics = diagnosticsEnabled(request);
+  const diagnostics: Record<string, unknown> = {
+    openai_calls: 0,
+    candidate_count: 0,
+    rehydrated_count: 0,
+    used_fast_search_rpc: false,
+    intent_mode: null,
+    intent_received: false,
+    retrieval_route: null,
+  };
+  aiLog("request_start");
   const admin = createSupabaseServiceClient();
   if (!admin) {
+    aiLog("failure_reason", { reason: "supabase_service_missing" });
     return NextResponse.json(
       { error: "service_supabase_manquant", detail: "SUPABASE_SERVICE_ROLE_KEY requise." },
       { status: 500 },
@@ -68,10 +90,12 @@ export async function POST(request: Request) {
 
   const { user, error: authErr } = await getUserFromApiRequest(request);
   if (authErr || !user) {
+    aiLog("failure_reason", { reason: "auth_required" });
     return NextResponse.json({ error: "non_authentifie" }, { status: 401 });
   }
 
   const openai = getOpenAIClient();
+  aiLog("openai_status", { configured: Boolean(openai) });
 
   let query: string;
   let offset = 0;
@@ -107,6 +131,7 @@ export async function POST(request: Request) {
 
   const aiEnabled = Boolean(settings[PUBLIC_APP_SETTING_KEYS.sermonAiSearchEnabled]);
   if (!aiEnabled) {
+    aiLog("failure_reason", { reason: "assistant_disabled" });
     return NextResponse.json({ error: "sermon_ia_desactive" }, { status: 403 });
   }
   const isContinuationPage = offset > 0;
@@ -135,6 +160,7 @@ export async function POST(request: Request) {
 
   // Recherche assistee : comprehension IA, puis extraction exacte depuis Supabase.
   if (!billingExempt && creditCost > 0 && balance < creditCost) {
+    aiLog("failure_reason", { reason: "insufficient_credits" });
     return NextResponse.json(
       {
         error: "credits_insuffisants",
@@ -150,20 +176,39 @@ export async function POST(request: Request) {
   let candidates: SermonParagraphCandidate[];
   if (isContinuationPage) {
     candidates = await fetchSermonSearchCandidates(admin, query);
+    diagnostics.candidate_count = candidates.length;
+    diagnostics.used_fast_search_rpc = candidates.some((c) => c.prev_paragraph_number !== undefined || c.next_paragraph_number !== undefined);
+    diagnostics.retrieval_route = "continuation";
+    aiLog("candidate_count", { count: candidates.length, continuation: true });
   } else {
     if (!openai) {
+      aiLog("failure_reason", { reason: "openai_missing" });
       return NextResponse.json(
         { error: "openai_non_configure", detail: "OPENAI_API_KEY manquante cote serveur." },
         { status: 503 },
       );
     }
+    aiLog("openai_called");
+    diagnostics.openai_calls = 1;
     const retrieval = await resolveHybridRetrieval(admin, openai, query, {
       primarySlug: null,
       turnContextBlock: null,
       profile: "library",
+      agentFirst: true,
     });
     semantic = retrieval.semantic;
     candidates = retrieval.candidates;
+    diagnostics.candidate_count = candidates.length;
+    diagnostics.used_fast_search_rpc = candidates.some((c) => c.prev_paragraph_number !== undefined || c.next_paragraph_number !== undefined);
+    diagnostics.intent_mode = semantic?.search_mode ?? null;
+    diagnostics.intent_received = Boolean(semantic);
+    diagnostics.retrieval_route = retrieval.usedRetrievalAgent ? "agent" : "deterministic_fallback";
+    aiLog("intent_received", {
+      has_intent: Boolean(semantic),
+      mode: semantic?.search_mode ?? null,
+      routed_by: retrieval.usedRetrievalAgent ? "agent" : "deterministic_fallback",
+    });
+    aiLog("candidate_count", { count: candidates.length });
   }
 
   let balanceAfter = balance;
@@ -178,6 +223,7 @@ export async function POST(request: Request) {
     });
     const debitObj = debit as { ok?: boolean; balance_after?: number; billing_skipped?: boolean } | null;
     if (dErr || !debitObj || debitObj.ok !== true) {
+      aiLog("failure_reason", { reason: "credit_debit_failed" });
       return NextResponse.json(
         { error: "debit_credits_echoue", detail: debitObj ?? dErr?.message },
         { status: 500 },
@@ -187,8 +233,12 @@ export async function POST(request: Request) {
     if (typeof debitObj.balance_after === "number") balanceAfter = debitObj.balance_after;
   }
   const creditsCharged = billingSkipped ? 0 : creditCost;
+  aiLog("credits_charged", { amount: creditsCharged, skipped: billingSkipped });
 
   if (candidates.length === 0) {
+    diagnostics.rehydrated_count = 0;
+    aiLog("rehydrated_count", { count: 0 });
+    aiLog("final_count", { count: 0, ms: Date.now() - startedAt });
     return NextResponse.json({
       ok: true,
       results: [],
@@ -202,6 +252,7 @@ export async function POST(request: Request) {
       credit_cost: creditCost,
       balance_after: balanceAfter,
       billing_skipped: billingSkipped,
+      ...(includeDiagnostics ? { diagnostics: { ...diagnostics, duration_ms: Date.now() - startedAt } } : {}),
     });
   }
 
@@ -210,7 +261,19 @@ export async function POST(request: Request) {
 
   const results: Record<string, unknown>[] = [];
   for (const c of page.page) {
-    const n = await fetchNeighborParagraphs(admin, c.slug, c.paragraph_number);
+    const hasHydratedNeighbors =
+      c.prev_paragraph_number !== undefined ||
+      c.prev_paragraph_text !== undefined ||
+      c.next_paragraph_number !== undefined ||
+      c.next_paragraph_text !== undefined;
+    const n = hasHydratedNeighbors
+      ? {
+          prev_paragraph_number: c.prev_paragraph_number ?? null,
+          prev_paragraph_text: c.prev_paragraph_text ?? null,
+          next_paragraph_number: c.next_paragraph_number ?? null,
+          next_paragraph_text: c.next_paragraph_text ?? null,
+        }
+      : await fetchNeighborParagraphs(admin, c.slug, c.paragraph_number);
     results.push({
       slug: c.slug,
       title: c.title,
@@ -232,6 +295,9 @@ export async function POST(request: Request) {
       _total_count: page.totalCount,
     });
   }
+  diagnostics.rehydrated_count = results.length;
+  aiLog("rehydrated_count", { count: results.length });
+  aiLog("final_count", { count: results.length, total: page.totalCount, ms: Date.now() - startedAt });
 
   return NextResponse.json({
     ok: true,
@@ -247,5 +313,6 @@ export async function POST(request: Request) {
     balance_after: balanceAfter,
     billing_skipped: billingSkipped,
     scope: semantic?.restrict_sermon_slug ? { kind: "sermon", sermon_slug: semantic.restrict_sermon_slug } : { kind: "library" },
+    ...(includeDiagnostics ? { diagnostics: { ...diagnostics, duration_ms: Date.now() - startedAt } } : {}),
   });
 }

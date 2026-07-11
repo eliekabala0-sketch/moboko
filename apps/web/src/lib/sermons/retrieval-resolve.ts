@@ -35,21 +35,24 @@ export async function resolveHybridRetrieval(
     primarySlug: string | null;
     turnContextBlock: string | null;
     profile: ConcordanceFetchProfile;
+    agentFirst?: boolean;
   },
 ): Promise<HybridRetrievalResult> {
-  const det = await tryDeterministicRetrieval(admin, query, { primarySlug: opts.primarySlug });
-  if (det) {
-    const candidates =
-      det.preFetchedCandidates != null
-        ? det.preFetchedCandidates
-        : await fetchConcordanceSemanticCandidates(admin, query, det.semantic, opts.profile);
-    const skipRankingLlm = det.skipRankingLlm || candidates.length <= 3;
-    return {
-      semantic: det.semantic,
-      candidates,
-      skipRankingLlm,
-      usedRetrievalAgent: false,
-    };
+  if (!opts.agentFirst) {
+    const det = await tryDeterministicRetrieval(admin, query, { primarySlug: opts.primarySlug });
+    if (det) {
+      const candidates =
+        det.preFetchedCandidates != null
+          ? det.preFetchedCandidates
+          : await fetchConcordanceSemanticCandidates(admin, query, det.semantic, opts.profile);
+      const skipRankingLlm = det.skipRankingLlm || candidates.length <= 3;
+      return {
+        semantic: det.semantic,
+        candidates,
+        skipRankingLlm,
+        usedRetrievalAgent: false,
+      };
+    }
   }
 
   let semantic: SemanticIntent | null = null;
@@ -59,6 +62,22 @@ export async function resolveHybridRetrieval(
     semantic = null;
   }
   if (semantic) semantic = applyFollowUpSlug(semantic, opts.primarySlug);
+
+  if (!semantic && opts.agentFirst) {
+    const det = await tryDeterministicRetrieval(admin, query, { primarySlug: opts.primarySlug });
+    if (det) {
+      const candidates =
+        det.preFetchedCandidates != null
+          ? det.preFetchedCandidates
+          : await fetchConcordanceSemanticCandidates(admin, query, det.semantic, opts.profile);
+      return {
+        semantic: det.semantic,
+        candidates,
+        skipRankingLlm: det.skipRankingLlm || candidates.length <= 3,
+        usedRetrievalAgent: false,
+      };
+    }
+  }
 
   const candidates = await fetchConcordanceSemanticCandidates(admin, query, semantic, opts.profile);
   const skipRankingLlm = candidates.length <= 3;

@@ -10,6 +10,7 @@ import {
   type SermonListRow,
 } from "@/lib/sermons/search";
 import type { ConcordanceHit } from "@/lib/sermons/concordance-types";
+import { fastRowsToConcordanceHits, fetchFastSermonSearch } from "@/lib/sermons/fast-search";
 import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
 import { consumeNormalSearchQuota } from "@/lib/billing/normal-search-quota";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
@@ -96,65 +97,100 @@ export default async function SermonsPage({ searchParams }: PageProps) {
     }
 
     if (pq.length >= 2 && !paragraphSearchError) {
-      const { data: paraData, error: paraErr } = await supabase
-        .from("sermon_paragraphs")
-        .select(
-          `
-          paragraph_number,
-          paragraph_text,
-          sermons ( slug, title, year, preached_on, location )
-        `,
-        )
-        .textSearch("search_tsv", pq, { type: "websearch", config: "french" })
-        .limit(60);
+      const y = sy ? parseInt(sy, 10) : null;
+      const admin = createSupabaseServiceClient();
+      const fast = admin
+        ? await fetchFastSermonSearch(admin, pq, {
+            titleFilter: st,
+            year: y != null && !Number.isNaN(y) && y >= 1000 && y <= 2100 ? y : null,
+            locationFilter: sl,
+            limit: 60,
+            offset: 0,
+          })
+        : null;
 
-      if (paraErr) {
-        paragraphSearchError = paraErr.message;
+      if (fast) {
+        concordanceHits.push(
+          ...fastRowsToConcordanceHits(fast.rows, {
+            query: pq,
+            source: "sermons-search",
+            offset: 0,
+            pageSize: 60,
+            totalCount: fast.rows.length,
+          }),
+        );
+        paragraphHits = concordanceHits.map((hit) => ({
+          paragraph_number: hit.paragraph_number,
+          paragraph_text: hit.paragraph_text,
+          sermons: {
+            slug: hit.slug,
+            title: hit.title,
+            year: hit.date && /^\d{4}$/.test(hit.date) ? Number(hit.date) : null,
+            preached_on: hit.date && /^\d{4}-\d{2}-\d{2}$/.test(hit.date) ? hit.date : null,
+            location: hit.location ?? null,
+          },
+        }));
       } else {
-        paragraphHits = (paraData ?? []).map((row) => {
-          const emb = row.sermons;
-          const sermon = Array.isArray(emb) ? emb[0] : emb;
-          return {
-            paragraph_number: row.paragraph_number as number,
-            paragraph_text: row.paragraph_text as string,
-            sermons: sermon
-              ? {
-                  slug: sermon.slug as string,
-                  title: sermon.title as string,
-                  year: (sermon.year as number | null) ?? null,
-                  preached_on: (sermon.preached_on as string | null) ?? null,
-                  location: (sermon.location as string | null) ?? null,
-                }
-              : null,
-          } satisfies ParagraphHitRow;
-        });
-        paragraphHits.sort((a, b) => {
-          const da = a.sermons?.preached_on ?? (a.sermons?.year != null ? `${a.sermons.year}-01-01` : "9999-12-31");
-          const db = b.sermons?.preached_on ?? (b.sermons?.year != null ? `${b.sermons.year}-01-01` : "9999-12-31");
-          const byDate = da.localeCompare(db);
-          if (byDate !== 0) return byDate;
-          return a.paragraph_number - b.paragraph_number;
-        });
-        for (const hit of paragraphHits) {
-          const s = hit.sermons;
-          if (!s?.slug) continue;
-          const n = await fetchNeighborParagraphs(supabase, s.slug, hit.paragraph_number);
-          concordanceHits.push({
-            slug: s.slug,
-            title: s.title,
-            location: s.location ?? null,
-            date: s.preached_on ?? (s.year != null ? String(s.year) : null),
-            paragraph_number: hit.paragraph_number,
-            paragraph_text: hit.paragraph_text,
-            prev_paragraph_number: n.prev_paragraph_number,
-            prev_paragraph_text: n.prev_paragraph_text,
-            next_paragraph_number: n.next_paragraph_number,
-            next_paragraph_text: n.next_paragraph_text,
-            _query: pq,
-            _total_count: paragraphHits.length,
-            _has_more: false,
-            _next_offset: null,
+        const { data: paraData, error: paraErr } = await supabase
+          .from("sermon_paragraphs")
+          .select(
+            `
+            paragraph_number,
+            paragraph_text,
+            sermons ( slug, title, year, preached_on, location )
+          `,
+          )
+          .textSearch("search_tsv", pq, { type: "websearch", config: "french" })
+          .limit(60);
+
+        if (paraErr) {
+          paragraphSearchError = "La recherche est temporairement indisponible. Reessayez.";
+        } else {
+          paragraphHits = (paraData ?? []).map((row) => {
+            const emb = row.sermons;
+            const sermon = Array.isArray(emb) ? emb[0] : emb;
+            return {
+              paragraph_number: row.paragraph_number as number,
+              paragraph_text: row.paragraph_text as string,
+              sermons: sermon
+                ? {
+                    slug: sermon.slug as string,
+                    title: sermon.title as string,
+                    year: (sermon.year as number | null) ?? null,
+                    preached_on: (sermon.preached_on as string | null) ?? null,
+                    location: (sermon.location as string | null) ?? null,
+                  }
+                : null,
+            } satisfies ParagraphHitRow;
           });
+          paragraphHits.sort((a, b) => {
+            const da = a.sermons?.preached_on ?? (a.sermons?.year != null ? `${a.sermons.year}-01-01` : "9999-12-31");
+            const db = b.sermons?.preached_on ?? (b.sermons?.year != null ? `${b.sermons.year}-01-01` : "9999-12-31");
+            const byDate = da.localeCompare(db);
+            if (byDate !== 0) return byDate;
+            return a.paragraph_number - b.paragraph_number;
+          });
+          for (const hit of paragraphHits) {
+            const s = hit.sermons;
+            if (!s?.slug) continue;
+            const n = await fetchNeighborParagraphs(supabase, s.slug, hit.paragraph_number);
+            concordanceHits.push({
+              slug: s.slug,
+              title: s.title,
+              location: s.location ?? null,
+              date: s.preached_on ?? (s.year != null ? String(s.year) : null),
+              paragraph_number: hit.paragraph_number,
+              paragraph_text: hit.paragraph_text,
+              prev_paragraph_number: n.prev_paragraph_number,
+              prev_paragraph_text: n.prev_paragraph_text,
+              next_paragraph_number: n.next_paragraph_number,
+              next_paragraph_text: n.next_paragraph_text,
+              _query: pq,
+              _total_count: paragraphHits.length,
+              _has_more: false,
+              _next_offset: null,
+            });
+          }
         }
       }
     }
