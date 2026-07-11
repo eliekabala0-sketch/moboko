@@ -64,6 +64,18 @@ function rowToPartial(
       return { supportSuggestedAmounts: v == null ? "5,10,25,50" : String(v) };
     case PUBLIC_APP_SETTING_KEYS.supportTeamContact:
       return { supportTeamContact: v == null ? "" : String(v) };
+    case PUBLIC_APP_SETTING_KEYS.supportOtherAmountEnabled:
+      return { supportOtherAmountEnabled: v == null ? true : Boolean(v) };
+    case PUBLIC_APP_SETTING_KEYS.supportMinAmount:
+      return {
+        supportMinAmount:
+          typeof v === "number" && Number.isFinite(v) ? Math.max(5, Math.floor(v)) : 5,
+      };
+    case PUBLIC_APP_SETTING_KEYS.supportMaxAmount:
+      return {
+        supportMaxAmount:
+          typeof v === "number" && Number.isFinite(v) ? Math.min(1999, Math.max(5, Math.floor(v))) : 1999,
+      };
     default:
       return {};
   }

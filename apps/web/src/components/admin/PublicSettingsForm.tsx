@@ -60,6 +60,17 @@ export function PublicSettingsForm({ initial }: Props) {
   const [supportContact, setSupportContact] = useState(
     String(initial[PUBLIC_APP_SETTING_KEYS.supportTeamContact] ?? ""),
   );
+  const [supportOtherEnabled, setSupportOtherEnabled] = useState(
+    initial[PUBLIC_APP_SETTING_KEYS.supportOtherAmountEnabled] == null
+      ? true
+      : Boolean(initial[PUBLIC_APP_SETTING_KEYS.supportOtherAmountEnabled]),
+  );
+  const [supportMinAmount, setSupportMinAmount] = useState(
+    Number(initial[PUBLIC_APP_SETTING_KEYS.supportMinAmount] ?? 5),
+  );
+  const [supportMaxAmount, setSupportMaxAmount] = useState(
+    Number(initial[PUBLIC_APP_SETTING_KEYS.supportMaxAmount] ?? 1999),
+  );
 
   function save() {
     setErr(null);
@@ -82,6 +93,9 @@ export function PublicSettingsForm({ initial }: Props) {
           [PUBLIC_APP_SETTING_KEYS.subscriptionMonthlyAiCredits]: Math.max(0, Math.floor(subscriptionCredits)),
           [PUBLIC_APP_SETTING_KEYS.supportSuggestedAmounts]: supportAmounts,
           [PUBLIC_APP_SETTING_KEYS.supportTeamContact]: supportContact,
+          [PUBLIC_APP_SETTING_KEYS.supportOtherAmountEnabled]: supportOtherEnabled,
+          [PUBLIC_APP_SETTING_KEYS.supportMinAmount]: Math.max(5, Math.floor(supportMinAmount)),
+          [PUBLIC_APP_SETTING_KEYS.supportMaxAmount]: Math.min(1999, Math.max(5, Math.floor(supportMaxAmount))),
         });
         setMessage("Paramètres enregistrés.");
         router.refresh();
@@ -273,6 +287,37 @@ export function PublicSettingsForm({ initial }: Props) {
                 onChange={(e) => setSupportContact(e.target.value)}
                 className="moboko-input mt-2"
                 placeholder="contact@..."
+              />
+            </label>
+            <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)]/50 px-4 py-3 transition hover:border-[var(--border-strong)]">
+              <input
+                type="checkbox"
+                checked={supportOtherEnabled}
+                onChange={(e) => setSupportOtherEnabled(e.target.checked)}
+                className="h-4 w-4 rounded border-[var(--border-strong)] bg-[var(--surface-elevated)] text-[var(--primary)]"
+              />
+              <span className="text-sm text-[var(--foreground)]">Autoriser autre montant</span>
+            </label>
+            <label className="text-sm font-medium text-[var(--foreground)]">
+              <span className="text-[var(--muted)]">Minimum</span>
+              <input
+                type="number"
+                min={5}
+                max={1999}
+                value={supportMinAmount}
+                onChange={(e) => setSupportMinAmount(Number(e.target.value))}
+                className="moboko-input mt-2 tabular-nums"
+              />
+            </label>
+            <label className="text-sm font-medium text-[var(--foreground)]">
+              <span className="text-[var(--muted)]">Maximum</span>
+              <input
+                type="number"
+                min={5}
+                max={1999}
+                value={supportMaxAmount}
+                onChange={(e) => setSupportMaxAmount(Number(e.target.value))}
+                className="moboko-input mt-2 tabular-nums"
               />
             </label>
           </div>

@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 
 export type PaymentProviderName = "badiboss_pay";
-export type CheckoutPurpose = "subscription" | "credits";
+export type CheckoutPurpose = "subscription" | "credits" | "support_donation";
 
 export type CheckoutRequest = {
   transactionId: string;
@@ -39,6 +39,16 @@ export type PaymentWebhookEvent =
       externalId: string;
       userId: string;
       credits: number;
+      amount: number | null;
+      currency: string | null;
+      raw: unknown;
+    }
+  | {
+      kind: "support_donation_paid";
+      provider: PaymentProviderName;
+      eventId: string;
+      externalId: string;
+      userId: string;
       amount: number | null;
       currency: string | null;
       raw: unknown;
@@ -192,6 +202,19 @@ export async function parsePaymentWebhook(request: Request): Promise<PaymentWebh
     if (credits > 0) {
       return { kind: "credits_paid", provider: "badiboss_pay", eventId, externalId, userId, credits, amount, currency, raw: data };
     }
+  }
+
+  if (paid && purpose === "support_donation") {
+    return {
+      kind: "support_donation_paid",
+      provider: "badiboss_pay",
+      eventId,
+      externalId,
+      userId,
+      amount,
+      currency,
+      raw: data,
+    };
   }
 
   return {

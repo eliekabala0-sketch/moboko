@@ -6,10 +6,19 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
-function parsePurpose(raw: unknown): "subscription" | "credits" | null {
+function parseCheckout(raw: unknown): { purpose: "subscription" | "credits" | "support_donation"; amount?: number } | null {
   if (!raw || typeof raw !== "object") return null;
-  const purpose = (raw as { purpose?: unknown }).purpose;
-  return purpose === "subscription" || purpose === "credits" ? purpose : null;
+  const obj = raw as { purpose?: unknown; amount?: unknown };
+  const purpose = obj.purpose;
+  if (purpose === "subscription" || purpose === "credits") return { purpose };
+  if (purpose === "support_donation") {
+    const amount = typeof obj.amount === "number" ? obj.amount : Number(obj.amount);
+    if (!Number.isFinite(amount)) return null;
+    const cents = Math.round(amount * 100);
+    if (cents < 500 || cents > 199900) return null;
+    return { purpose, amount: cents };
+  }
+  return null;
 }
 
 export async function POST(request: Request) {
@@ -19,18 +28,19 @@ export async function POST(request: Request) {
   const { user, error: authErr } = await getUserFromApiRequest(request);
   if (authErr || !user) return NextResponse.json({ error: "non_authentifie" }, { status: 401 });
 
-  let purpose: "subscription" | "credits" | null = null;
+  let parsed: { purpose: "subscription" | "credits" | "support_donation"; amount?: number } | null = null;
   try {
-    purpose = parsePurpose(await request.json());
+    parsed = parseCheckout(await request.json());
   } catch {
     return NextResponse.json({ error: "json_invalide" }, { status: 400 });
   }
-  if (!purpose) return NextResponse.json({ error: "purpose_invalide" }, { status: 400 });
+  if (!parsed) return NextResponse.json({ error: "purpose_invalide" }, { status: 400 });
 
   const checkout = await createBillingCheckout({
     admin,
     userId: user.id,
-    purpose,
+    purpose: parsed.purpose,
+    amount: parsed.amount,
     siteUrl: getSiteUrl(),
   });
   if (!checkout.ok) {

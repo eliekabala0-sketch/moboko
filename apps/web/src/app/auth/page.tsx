@@ -27,7 +27,7 @@ export default function AuthPage() {
             Accès Moboko
           </h1>
           <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-[var(--muted)]">
-            Google, Apple, SMS ou e-mail — un seul compte Supabase, profil et crédits partagés.
+            Un acces simple par e-mail et mot de passe, avec profil conserve sur vos appareils.
           </p>
         </div>
         <Suspense

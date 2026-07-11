@@ -23,8 +23,18 @@ export async function createBillingCheckout(opts: {
   userId: string;
   purpose: CheckoutPurpose;
   siteUrl: string;
+  amount?: number | null;
 }) {
-  const offer = opts.purpose === "subscription" ? BILLING_OFFERS.subscription : BILLING_OFFERS.credits;
+  const donationAmount =
+    opts.purpose === "support_donation"
+      ? Math.max(500, Math.min(199900, Math.floor(Number(opts.amount ?? 0))))
+      : null;
+  const offer =
+    opts.purpose === "subscription"
+      ? BILLING_OFFERS.subscription
+      : opts.purpose === "credits"
+        ? BILLING_OFFERS.credits
+        : { amount: donationAmount ?? 500, currency: "USD" };
   const planKey = opts.purpose === "subscription" ? BILLING_OFFERS.subscription.planKey : null;
   const credits = opts.purpose === "credits" ? BILLING_OFFERS.credits.credits : null;
   const { data: tx, error } = await opts.admin
@@ -38,7 +48,7 @@ export async function createBillingCheckout(opts: {
       purpose: opts.purpose,
       plan_key: planKey,
       credits,
-      metadata: { source: "checkout_request" },
+      metadata: { source: "checkout_request", support_donation: opts.purpose === "support_donation" },
     })
     .select("id")
     .single();
@@ -52,8 +62,8 @@ export async function createBillingCheckout(opts: {
     currency: offer.currency,
     planKey,
     credits,
-    successUrl: `${opts.siteUrl}/billing?status=success`,
-    cancelUrl: `${opts.siteUrl}/billing?status=cancelled`,
+    successUrl: `${opts.siteUrl}/${opts.purpose === "support_donation" ? "support" : "billing"}?status=success`,
+    cancelUrl: `${opts.siteUrl}/${opts.purpose === "support_donation" ? "support" : "billing"}?status=cancelled`,
   });
 
   if (!checkout.ok) {
@@ -69,7 +79,7 @@ export async function createBillingCheckout(opts: {
     .update({
       external_id: checkout.externalId,
       checkout_url: checkout.checkoutUrl,
-      metadata: { source: "checkout_request", checkout_created: true },
+      metadata: { source: "checkout_request", checkout_created: true, support_donation: opts.purpose === "support_donation" },
     })
     .eq("id", tx.id as string);
 
@@ -153,6 +163,17 @@ export async function applyPaymentWebhook(admin: SupabaseClient, event: PaymentW
           completed_at: new Date().toISOString(),
           credits: event.credits,
           metadata: { source: "payment_webhook", credits: event.credits },
+        })
+        .eq("provider", event.provider)
+        .eq("external_id", event.externalId);
+    } else if (event.kind === "support_donation_paid") {
+      await admin
+        .from("payment_transactions")
+        .update({
+          status: "paid",
+          provider_event_id: event.eventId,
+          completed_at: new Date().toISOString(),
+          metadata: { source: "payment_webhook", support_donation: true },
         })
         .eq("provider", event.provider)
         .eq("external_id", event.externalId);

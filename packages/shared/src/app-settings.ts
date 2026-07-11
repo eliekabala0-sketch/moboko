@@ -21,6 +21,9 @@ export const PUBLIC_APP_SETTING_KEYS = {
   subscriptionMonthlyAiCredits: "subscription_monthly_ai_credits",
   supportSuggestedAmounts: "support_suggested_amounts",
   supportTeamContact: "support_team_contact",
+  supportOtherAmountEnabled: "support_other_amount_enabled",
+  supportMinAmount: "support_min_amount",
+  supportMaxAmount: "support_max_amount",
 } as const;
 
 /** Liste alignée sur `app_setting_is_public_readable` côté SQL. */
@@ -57,6 +60,9 @@ export type PublicHomePageSettings = {
   subscriptionMonthlyAiCredits: number;
   supportSuggestedAmounts: string;
   supportTeamContact: string;
+  supportOtherAmountEnabled: boolean;
+  supportMinAmount: number;
+  supportMaxAmount: number;
 };
 
 export const defaultPublicHomePageSettings: PublicHomePageSettings = {
@@ -76,4 +82,7 @@ export const defaultPublicHomePageSettings: PublicHomePageSettings = {
   subscriptionMonthlyAiCredits: 0,
   supportSuggestedAmounts: "5,10,25,50",
   supportTeamContact: "",
+  supportOtherAmountEnabled: true,
+  supportMinAmount: 5,
+  supportMaxAmount: 1999,
 };

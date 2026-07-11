@@ -1,7 +1,7 @@
 import { Masthead } from "@/components/layout/Masthead";
+import { SupportDonationCheckout } from "@/components/support/SupportDonationCheckout";
 import { fetchPublicAppSettings } from "@/lib/data/public-app-settings";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 async function submitSupportMessage(formData: FormData) {
@@ -26,7 +26,7 @@ async function submitSupportMessage(formData: FormData) {
 export default async function SupportPage({
   searchParams,
 }: {
-  searchParams: Promise<{ sent?: string; error?: string }>;
+  searchParams: Promise<{ sent?: string; error?: string; status?: string }>;
 }) {
   const sp = await searchParams;
   const settings = await fetchPublicAppSettings();
@@ -35,6 +35,7 @@ export default async function SupportPage({
     .map((x) => x.trim())
     .filter(Boolean)
     .slice(0, 8);
+
   return (
     <div className="flex min-h-full flex-col">
       <Masthead />
@@ -46,40 +47,38 @@ export default async function SupportPage({
           Soutenir Moboko
         </h1>
         <p className="mt-3 text-sm leading-relaxed text-[var(--muted)]">
-          Pour l&apos;abonnement, les crédits IA ou le téléchargement PDF, utilisez l&apos;espace abonnement.
+          Le soutien est un don volontaire pour Moboko, sans service ni avantage attendu en retour.
         </p>
-        <Link href="/billing" className="moboko-btn-primary mt-6 inline-flex px-6 py-3 text-sm">
-          Abonnement et crédits
-        </Link>
-        {amounts.length > 0 || settings.supportTeamContact ? (
-          <div className="moboko-card mt-6 p-5">
-            {amounts.length > 0 ? (
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
-                  Montants proposes
-                </p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {amounts.map((amount) => (
-                    <span
-                      key={amount}
-                      className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm font-semibold text-[var(--foreground)]"
-                    >
-                      {amount}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-            {settings.supportTeamContact ? (
-              <p className="mt-4 text-sm text-[var(--muted)]">
-                Contact : <span className="text-[var(--foreground)]">{settings.supportTeamContact}</span>
-              </p>
-            ) : null}
-          </div>
+
+        {sp.status === "success" ? (
+          <p className="moboko-card mt-6 border-[var(--success)]/30 bg-[var(--success-soft)] p-4 text-sm text-[var(--success)]">
+            Merci. Votre don est en cours de confirmation.
+          </p>
         ) : null}
+        {sp.status === "cancelled" ? (
+          <p className="moboko-card mt-6 border-[var(--warning)]/30 bg-[var(--warning-soft)] p-4 text-sm text-[var(--foreground)]">
+            Le paiement n&apos;a pas ete finalise.
+          </p>
+        ) : null}
+
+        {amounts.length > 0 ? (
+          <SupportDonationCheckout
+            amounts={amounts}
+            allowOther={settings.supportOtherAmountEnabled}
+            minAmount={settings.supportMinAmount}
+            maxAmount={settings.supportMaxAmount}
+          />
+        ) : null}
+
+        {settings.supportTeamContact ? (
+          <p className="moboko-card mt-6 p-4 text-sm text-[var(--muted)]">
+            Contact : <span className="text-[var(--foreground)]">{settings.supportTeamContact}</span>
+          </p>
+        ) : null}
+
         {sp.sent ? (
           <p className="moboko-card mt-6 border-[var(--success)]/30 bg-[var(--success-soft)] p-4 text-sm text-[var(--success)]">
-            Message envoyé.
+            Message envoye.
           </p>
         ) : null}
         {sp.error ? (
@@ -87,6 +86,7 @@ export default async function SupportPage({
             Envoi impossible pour le moment.
           </p>
         ) : null}
+
         <form action={submitSupportMessage} className="moboko-card mt-8 space-y-4 p-6">
           <input name="name" className="moboko-input" placeholder="Nom (optionnel)" />
           <input name="email" type="email" className="moboko-input" placeholder="Email (optionnel)" />
