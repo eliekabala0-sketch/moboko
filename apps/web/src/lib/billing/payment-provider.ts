@@ -196,8 +196,20 @@ export async function createPaymentCheckout(req: CheckoutRequest): Promise<Check
       const detail = isRecord(data) ? JSON.stringify(data).slice(0, 600) : "";
       return { ok: false, error: "provider_error", detail: `HTTP ${res.status}${detail ? ` ${detail}` : ""}` };
     }
-    const externalId = asString(data.id) || asString(data.external_id) || req.transactionId;
+    const providerPayment =
+      isRecord(data.provider_response) && isRecord(data.provider_response.payment)
+        ? data.provider_response.payment
+        : null;
+    const externalId =
+      asString(data.id) ||
+      asString(data.external_id) ||
+      asString(data.transaction_id) ||
+      asString(providerPayment?.transactionId) ||
+      req.transactionId;
     const checkoutUrl = asString(data.checkout_url) || asString(data.url);
+    if (!checkoutUrl && data.success === true && asString(data.status) === "pending") {
+      return { ok: true, provider: "badiboss_pay", externalId, checkoutUrl: req.successUrl };
+    }
     if (!checkoutUrl) {
       return { ok: false, error: "provider_error", detail: `checkout_url_absente ${JSON.stringify(data).slice(0, 600)}` };
     }

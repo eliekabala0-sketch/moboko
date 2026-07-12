@@ -9,7 +9,7 @@ export const metadata = {
 };
 
 type PageProps = {
-  searchParams: Promise<{ from?: string }>;
+  searchParams: Promise<{ from?: string; status?: string }>;
 };
 
 export default async function BillingPage({ searchParams }: PageProps) {
@@ -82,6 +82,17 @@ export default async function BillingPage({ searchParams }: PageProps) {
           Les crédits servent aux fonctions assistées par IA (chat, recherche dans les sermons, etc.). Le paiement en
           ligne passe par un checkout sécurisé, puis l’activation est confirmée côté serveur.
         </p>
+
+        {sp.status === "success" ? (
+          <p className="moboko-card mt-6 border-[var(--success)]/30 bg-[var(--success-soft)] p-4 text-sm text-[var(--success)]">
+            Paiement lancé. Confirmez la demande sur votre téléphone; l&apos;activation sera faite après confirmation.
+          </p>
+        ) : null}
+        {sp.status === "cancelled" ? (
+          <p className="moboko-card mt-6 border-[var(--warning)]/30 bg-[var(--warning-soft)] p-4 text-sm text-[var(--foreground)]">
+            Le paiement n&apos;a pas été finalisé.
+          </p>
+        ) : null}
 
         {isLoggedIn ? (
           <div className="moboko-card mt-8 p-6">
