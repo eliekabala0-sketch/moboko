@@ -39,6 +39,73 @@ function dedupeQueries(parts: string[]): string[] {
   return out;
 }
 
+const MINISTRY_ALIASES = [
+  "predicateur",
+  "predication",
+  "ministre",
+  "ministere",
+  "pasteur",
+  "evangeliste",
+  "homme de dieu",
+  "serviteur de dieu",
+  "ancien",
+  "surveillant",
+  "messager",
+  "missionnaire",
+  "conducteur",
+  "frere dans le ministere",
+];
+
+const MARRIAGE_FAMILY_ALIASES = [
+  "mariage",
+  "marie",
+  "marier",
+  "epouse",
+  "femme",
+  "mari",
+  "foyer",
+  "famil",
+  "qualification",
+  "conduite",
+  "maison",
+];
+
+function normalizedText(s: string) {
+  return normQueryTokens(s).join(" ");
+}
+
+function hasAnyAlias(text: string, aliases: string[]) {
+  return aliases.some((alias) => text.includes(alias));
+}
+
+function shouldUseStrictMinistryFilter(query: string, semantic: SemanticIntent | null) {
+  const haystack = normalizedText(
+    [
+      query,
+      semantic?.intent ?? "",
+      semantic?.topic ?? "",
+      semantic?.passage_brief ?? "",
+      ...(semantic?.concepts ?? []),
+      ...(semantic?.expansions ?? []),
+      ...(semantic?.retrieval_phrases ?? []),
+    ].join(" "),
+  );
+  return hasAnyAlias(haystack, MINISTRY_ALIASES) && hasAnyAlias(haystack, MARRIAGE_FAMILY_ALIASES);
+}
+
+function applyStrictSemanticFilter(
+  candidates: SermonParagraphCandidate[],
+  query: string,
+  semantic: SemanticIntent | null,
+) {
+  if (!shouldUseStrictMinistryFilter(query, semantic)) return candidates;
+  const strict = candidates.filter((candidate) => {
+    const text = normalizedText(`${candidate.title ?? ""} ${candidate.paragraph_text ?? ""}`);
+    return hasAnyAlias(text, MINISTRY_ALIASES) && hasAnyAlias(text, MARRIAGE_FAMILY_ALIASES);
+  });
+  return strict;
+}
+
 export type ConcordanceFetchProfile = "chat" | "library";
 
 /**
@@ -121,5 +188,6 @@ export async function fetchConcordanceSemanticCandidates(
     const maxY = semantic.year_to ?? 2100;
     out = out.filter((c) => c.year == null || (c.year >= minY && c.year <= maxY));
   }
+  out = applyStrictSemanticFilter(out, query, semantic);
   return sortSermonOccurrencesOldestFirst(out).slice(0, MAX_CANDIDATES);
 }

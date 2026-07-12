@@ -166,6 +166,11 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
             </span>
           ) : null}
         </div>
+        {pending ? (
+          <p className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--foreground)]" role="status">
+            Moboko recherche les passages correspondants...
+          </p>
+        ) : null}
       </form>
 
       {err && errAction === "credits" ? (
@@ -223,7 +228,7 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
           {showEmptyOk ? (
             <div className="moboko-card p-6">
               <p className="text-sm leading-relaxed text-[var(--foreground)]">
-                Aucun paragraphe exact trouvé pour cette recherche.
+                Aucun passage suffisamment précis n&apos;a été trouvé pour cette recherche.
               </p>
             </div>
           ) : (

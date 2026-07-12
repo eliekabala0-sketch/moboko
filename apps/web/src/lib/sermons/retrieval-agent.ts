@@ -43,6 +43,9 @@ Règles :
 - retrieval_phrases : 3–8 expressions substantives pour la base (pas de mots pièges seuls).
 - avoid_lexical_bait : termes à ne pas utiliser seuls en requête.
 - passage_brief : critères internes pour le classement (inclusion / exclusion sémantique).
+- Si l’utilisateur parle d’un prédicateur/ministre/pasteur, élargis avec ces synonymes dans concepts ou retrieval_phrases : ministre, pasteur, évangéliste, serviteur de Dieu, homme de Dieu, ancien, surveillant, messager, frère dans le ministère.
+- Si la demande combine mariage/femme/foyer/famille avec prédicateur/ministre/pasteur, les bons passages doivent contenir les deux axes. Ne ramène pas seulement des passages généraux sur le mariage.
+- « selon le Message », « selon le prophète », « Frère Branham », « selon la Parole dans le Message » signifient : chercher uniquement dans les sermons Moboko de William Branham, sans connaissance externe.
 - follow_up_continuity : true si la phrase suppose le tour précédent (« toujours dans ce sermon », « montre encore », « plus précisément », etc.).
 - restrict_sermon_slug : slug exact si le contexte ou la question fixe un sermon.
 - paragraph_exact : numéro seulement si l’utilisateur demande explicitement un § connu ET que le slug est certain via contexte ; sinon null (le routeur déterministe gère le cas évident).
