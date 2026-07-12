@@ -155,6 +155,7 @@ export async function createPaymentCheckout(req: CheckoutRequest): Promise<Check
         reference: req.transactionId,
         transaction_id: req.transactionId,
         user_id: req.userId,
+        customer_id: req.userId,
         purpose: req.purpose,
         amount: req.amount,
         currency: req.currency,
