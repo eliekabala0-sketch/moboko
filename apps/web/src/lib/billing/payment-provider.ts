@@ -107,7 +107,7 @@ function asNumberOrNull(x: unknown): number | null {
 
 function fallbackClientPhone(raw: string | null | undefined) {
   const t = typeof raw === "string" ? raw.trim() : "";
-  return t || "+243000000000";
+  return t.replace(/^\+/, "") || "243990000000";
 }
 
 function fallbackClientName(raw: string | null | undefined) {
