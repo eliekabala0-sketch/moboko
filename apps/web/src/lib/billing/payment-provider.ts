@@ -175,7 +175,8 @@ export async function createPaymentCheckout(req: CheckoutRequest): Promise<Check
     });
     const data: unknown = await res.json().catch(() => ({}));
     if (!res.ok || !isRecord(data)) {
-      return { ok: false, error: "provider_error", detail: `HTTP ${res.status}` };
+      const detail = isRecord(data) ? JSON.stringify(data).slice(0, 600) : "";
+      return { ok: false, error: "provider_error", detail: `HTTP ${res.status}${detail ? ` ${detail}` : ""}` };
     }
     const externalId = asString(data.id) || asString(data.external_id) || req.transactionId;
     const checkoutUrl = asString(data.checkout_url) || asString(data.url);
