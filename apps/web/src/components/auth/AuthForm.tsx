@@ -1,6 +1,5 @@
 "use client";
 
-import { getSiteUrl } from "@/lib/auth/site-url";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -13,20 +12,12 @@ function safeInternalPath(raw: string | null): string | null {
   return t;
 }
 
-function normalizeE164(raw: string): string {
-  const t = raw.trim().replace(/\s/g, "");
-  if (!t) return "";
-  if (t.startsWith("+")) return t;
-  if (t.startsWith("00")) return `+${t.slice(2)}`;
-  return t;
-}
-
 function friendlyAuthError(message: string) {
   const lower = message.toLowerCase();
   if (lower.includes("invalid login") || lower.includes("invalid credentials")) {
     return "E-mail ou mot de passe incorrect.";
   }
-  if (lower.includes("email not confirmed")) return "Confirmez votre e-mail avant de vous connecter.";
+  if (lower.includes("email not confirmed")) return "Compte indisponible pour le moment. Reessayez ou contactez le soutien Moboko.";
   if (lower.includes("rate limit") || lower.includes("too many")) {
     return "Trop de tentatives. Reessayez dans quelques minutes.";
   }
@@ -44,14 +35,14 @@ export function AuthForm() {
   const [loading, setLoading] = useState<string | null>(null);
 
   const [mode, setMode] = useState<"signin" | "signup">("signin");
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
-  const [phoneStep, setPhoneStep] = useState<"idle" | "sent">("idle");
-  const [phone, setPhone] = useState("");
-  const [otp, setOtp] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [sex, setSex] = useState("");
+  const [city, setCity] = useState("");
+  const [age, setAge] = useState("");
 
   const redirectAfterAuth = safeInternalPath(searchParams.get("next"));
-  const phoneAuthEnabled = process.env.NEXT_PUBLIC_ENABLE_PHONE_AUTH === "true";
 
   useEffect(() => {
     const err = searchParams.get("error");
@@ -62,22 +53,40 @@ export function AuthForm() {
   const supabase = useCallback(() => createSupabaseBrowserClient(), []);
   const busy = loading !== null;
 
-  async function submitEmailPassword() {
+  async function resolveIdentifier() {
+    const res = await fetch("/api/auth/resolve-identifier", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier }),
+    });
+    const data = (await res.json()) as { authEmail?: string; error?: string };
+    if (!res.ok || !data.authEmail) {
+      throw new Error(data.error === "numero_invalide" ? "Le numero de telephone n'est pas valide." : "Indiquez un email ou un numero valide.");
+    }
+    return data.authEmail;
+  }
+
+  async function submitPassword() {
     setError(null);
     setInfo(null);
-    const cleanEmail = email.trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      setError("Indiquez une adresse e-mail valide.");
+    if (!identifier.trim()) {
+      setError("Indiquez votre email ou votre numero de telephone.");
       return;
     }
     if (password.length < 6) {
       setError("Le mot de passe doit contenir au moins 6 caracteres.");
       return;
     }
+    if (mode === "signup" && (!fullName.trim() || !sex.trim() || !city.trim() || !age.trim())) {
+      setError("Completez les informations d'inscription.");
+      return;
+    }
     setLoading("email");
     try {
+      let authEmail = "";
       if (mode === "signin") {
-        const { error: sErr } = await supabase().auth.signInWithPassword({ email: cleanEmail, password });
+        authEmail = await resolveIdentifier();
+        const { error: sErr } = await supabase().auth.signInWithPassword({ email: authEmail, password });
         if (sErr) {
           setError(friendlyAuthError(sErr.message));
           return;
@@ -85,19 +94,27 @@ export function AuthForm() {
         router.refresh();
         router.push(redirectAfterAuth ?? "/");
       } else {
-        const { data, error: uErr } = await supabase().auth.signUp({
-          email: cleanEmail,
-          password,
-          options: { emailRedirectTo: `${getSiteUrl()}/auth` },
+        const res = await fetch("/api/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ identifier, password, fullName, sex, city, age }),
         });
-        if (uErr) {
-          setError(friendlyAuthError(uErr.message));
+        const created = (await res.json()) as { authEmail?: string; message?: string };
+        if (!res.ok || !created.authEmail) {
+          setError(created.message ?? "Le compte n'a pas pu etre cree.");
+          return;
+        }
+        authEmail = created.authEmail;
+        const { error: sErr } = await supabase().auth.signInWithPassword({ email: authEmail, password });
+        if (sErr) {
+          setError(friendlyAuthError(sErr.message));
           return;
         }
         router.refresh();
-        if (data.session) router.push(redirectAfterAuth ?? "/");
-        else setInfo("Compte cree. Ouvrez le lien recu par e-mail si une confirmation est demandee.");
+        router.push(redirectAfterAuth ?? "/");
       }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Connexion indisponible pour le moment.");
     } finally {
       setLoading(null);
     }
@@ -106,73 +123,7 @@ export function AuthForm() {
   async function sendPasswordReset() {
     setError(null);
     setInfo(null);
-    const cleanEmail = email.trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      setError("Indiquez votre e-mail pour recevoir le lien.");
-      return;
-    }
-    setLoading("reset");
-    try {
-      const { error: rErr } = await supabase().auth.resetPasswordForEmail(cleanEmail, {
-        redirectTo: `${getSiteUrl()}/auth`,
-      });
-      if (rErr) {
-        setError(friendlyAuthError(rErr.message));
-        return;
-      }
-      setInfo("Lien de recuperation envoye si ce compte existe.");
-    } finally {
-      setLoading(null);
-    }
-  }
-
-  async function sendPhoneOtp() {
-    setError(null);
-    setInfo(null);
-    const e164 = normalizeE164(phone);
-    if (!e164.startsWith("+") || e164.length < 10) {
-      setError("Indiquez le numero au format international.");
-      return;
-    }
-    setLoading("phone-send");
-    try {
-      const { error: pErr } = await supabase().auth.signInWithOtp({ phone: e164, options: { channel: "sms" } });
-      if (pErr) {
-        setError(friendlyAuthError(pErr.message));
-        return;
-      }
-      setPhone(e164);
-      setPhoneStep("sent");
-      setInfo("Code envoye par SMS.");
-    } finally {
-      setLoading(null);
-    }
-  }
-
-  async function verifyPhoneOtp() {
-    setError(null);
-    setInfo(null);
-    const code = otp.trim();
-    if (code.length < 4) {
-      setError("Saisissez le code recu par SMS.");
-      return;
-    }
-    setLoading("phone-verify");
-    try {
-      const { error: vErr } = await supabase().auth.verifyOtp({
-        phone: normalizeE164(phone),
-        token: code,
-        type: "sms",
-      });
-      if (vErr) {
-        setError(friendlyAuthError(vErr.message));
-        return;
-      }
-      router.refresh();
-      router.push(redirectAfterAuth ?? "/");
-    } finally {
-      setLoading(null);
-    }
+    setInfo("Pour recuperer votre acces, contactez le soutien Moboko avec votre email ou numero.");
   }
 
   return (
@@ -182,7 +133,7 @@ export function AuthForm() {
           Connexion
         </p>
         <p className="text-center text-sm leading-relaxed text-[var(--muted)]">
-          Utilisez votre e-mail et votre mot de passe pour acceder a Moboko.
+          Utilisez votre email ou votre numero de telephone avec votre mot de passe.
         </p>
       </div>
 
@@ -212,14 +163,26 @@ export function AuthForm() {
           </button>
         </div>
 
+        {mode === "signup" ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <input className="moboko-input" placeholder="Nom complet" value={fullName} onChange={(e) => setFullName(e.target.value)} disabled={busy} autoComplete="name" />
+            <input className="moboko-input" placeholder="Ville" value={city} onChange={(e) => setCity(e.target.value)} disabled={busy} autoComplete="address-level2" />
+            <select className="moboko-input" value={sex} onChange={(e) => setSex(e.target.value)} disabled={busy}>
+              <option value="">Sexe</option>
+              <option value="femme">Femme</option>
+              <option value="homme">Homme</option>
+            </select>
+            <input className="moboko-input" type="number" inputMode="numeric" min={10} max={120} placeholder="Age" value={age} onChange={(e) => setAge(e.target.value)} disabled={busy} />
+          </div>
+        ) : null}
         <label className="block text-sm font-medium text-[var(--foreground)]">
-          <span className="text-[var(--muted)]">E-mail</span>
+          <span className="text-[var(--muted)]">Email ou numero de telephone</span>
           <input
-            type="email"
+            type="text"
             inputMode="email"
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="username"
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
             className="moboko-input mt-2"
             disabled={busy}
           />
@@ -237,8 +200,8 @@ export function AuthForm() {
         </label>
         <button
           type="button"
-          disabled={busy || !email.trim() || password.length < 6}
-          onClick={() => void submitEmailPassword()}
+          disabled={busy || !identifier.trim() || password.length < 6}
+          onClick={() => void submitPassword()}
           className="moboko-btn-primary w-full py-3.5 text-[15px] disabled:opacity-45"
         >
           {loading === "email" ? "Patientez..." : mode === "signin" ? "Se connecter" : "Creer le compte"}
@@ -246,7 +209,7 @@ export function AuthForm() {
         {mode === "signin" ? (
           <button
             type="button"
-            disabled={busy || !email.trim()}
+            disabled={busy || !identifier.trim()}
             onClick={() => void sendPasswordReset()}
             className="w-full text-center text-sm font-medium text-[var(--accent)] disabled:opacity-45"
           >
@@ -254,57 +217,6 @@ export function AuthForm() {
           </button>
         ) : null}
       </div>
-
-      {phoneAuthEnabled ? (
-        <div className="space-y-4 border-t border-[var(--border)] pt-5">
-          <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)]/50 p-5">
-            <p className="text-sm font-semibold text-[var(--foreground)]">Telephone</p>
-            {phoneStep === "idle" ? (
-              <div className="mt-4 space-y-3">
-                <input
-                  type="tel"
-                  inputMode="tel"
-                  autoComplete="tel"
-                  placeholder="+33 6 12 34 56 78"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="moboko-input"
-                  disabled={busy}
-                />
-                <button
-                  type="button"
-                  disabled={busy || !phone.trim()}
-                  onClick={() => void sendPhoneOtp()}
-                  className="moboko-btn-primary w-full py-3.5 text-[15px] disabled:opacity-45"
-                >
-                  {loading === "phone-send" ? "Envoi..." : "Recevoir un code"}
-                </button>
-              </div>
-            ) : (
-              <div className="mt-4 space-y-3">
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  placeholder="Code SMS"
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value)}
-                  className="moboko-input"
-                  disabled={busy}
-                />
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void verifyPhoneOtp()}
-                  className="moboko-btn-primary w-full py-3.5 text-[15px] disabled:opacity-45"
-                >
-                  {loading === "phone-verify" ? "Verification..." : "Valider le code"}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      ) : null}
 
       {error ? (
         <p className="rounded-xl border border-[var(--danger)]/35 bg-[var(--danger-soft)] px-4 py-3 text-sm leading-relaxed text-[var(--danger)]" role="alert">

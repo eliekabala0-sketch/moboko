@@ -27,7 +27,7 @@ export default function AuthPage() {
             Accès Moboko
           </h1>
           <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-[var(--muted)]">
-            Un acces simple par e-mail et mot de passe, avec profil conserve sur vos appareils.
+            Un acces simple par email ou telephone et mot de passe, avec profil conserve sur vos appareils.
           </p>
         </div>
         <Suspense
