@@ -198,7 +198,9 @@ export async function createPaymentCheckout(req: CheckoutRequest): Promise<Check
     }
     const externalId = asString(data.id) || asString(data.external_id) || req.transactionId;
     const checkoutUrl = asString(data.checkout_url) || asString(data.url);
-    if (!checkoutUrl) return { ok: false, error: "provider_error", detail: "checkout_url_absente" };
+    if (!checkoutUrl) {
+      return { ok: false, error: "provider_error", detail: `checkout_url_absente ${JSON.stringify(data).slice(0, 600)}` };
+    }
     return { ok: true, provider: "badiboss_pay", externalId, checkoutUrl };
   } catch (e) {
     return { ok: false, error: "provider_error", detail: e instanceof Error ? e.message : String(e) };
