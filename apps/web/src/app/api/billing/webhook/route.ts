@@ -11,7 +11,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "service_supabase_manquant" }, { status: 500 });
   }
 
-  const event = await parsePaymentWebhook(request);
+  const event = await parsePaymentWebhook(request, async (externalId) => {
+    const byExternal = await admin
+      .from("payment_transactions")
+      .select("user_id, purpose, plan_key, credits")
+      .eq("external_id", externalId)
+      .maybeSingle();
+    const byId = byExternal.data
+      ? byExternal
+      : await admin
+          .from("payment_transactions")
+          .select("user_id, purpose, plan_key, credits")
+          .eq("id", externalId)
+          .maybeSingle();
+    const data = byId.data;
+    if (!data) return null;
+    const purpose = data.purpose;
+    if (purpose !== "subscription" && purpose !== "credits" && purpose !== "support_donation") return null;
+    return {
+      userId: data.user_id as string,
+      purpose,
+      planKey: (data.plan_key as string | null) ?? null,
+      credits: (data.credits as number | null) ?? null,
+    };
+  });
   if (!event) {
     return NextResponse.json({ error: "webhook_invalide" }, { status: 400 });
   }

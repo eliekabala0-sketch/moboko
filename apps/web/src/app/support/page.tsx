@@ -1,7 +1,7 @@
-import { Masthead } from "@/components/layout/Masthead";
 import { SupportDonationCheckout } from "@/components/support/SupportDonationCheckout";
 import { fetchPublicAppSettings } from "@/lib/data/public-app-settings";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 async function submitSupportMessage(formData: FormData) {
@@ -38,7 +38,61 @@ export default async function SupportPage({
 
   return (
     <div className="flex min-h-full flex-col">
-      <Masthead />
+      <header className="sticky top-0 z-50 border-b border-[var(--border)] bg-[var(--overlay)] backdrop-blur-xl">
+        <div className="mx-auto flex h-[4.25rem] max-w-6xl items-center justify-between px-6">
+          <Link
+            href="/"
+            className="font-display text-lg font-semibold tracking-tight text-[var(--foreground)] transition hover:text-[var(--accent)]"
+          >
+            Moboko
+          </Link>
+          <nav className="hidden items-center gap-8 text-sm font-medium text-[var(--muted)] sm:flex">
+            {[
+              { href: "/chat", label: "Assistant" },
+              { href: "/sermons", label: "Sermons" },
+              { href: "/projection", label: "Projection" },
+              { href: "/posts", label: "Enseignements" },
+              { href: "/requests", label: "Requetes" },
+              { href: "/testimonies", label: "Temoignages" },
+              { href: "/support", label: "Soutien" },
+            ].map((item) => (
+              <Link key={item.href} href={item.href} className="transition-colors hover:text-[var(--foreground)]">
+                {item.label}
+              </Link>
+            ))}
+          </nav>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <Link
+              href="/auth"
+              className="rounded-full px-4 py-2 text-sm font-medium text-[var(--muted)] transition hover:bg-[var(--surface)] hover:text-[var(--foreground)]"
+            >
+              Connexion
+            </Link>
+            <Link href="/auth" className="moboko-btn-primary px-5 py-2 text-sm">
+              Commencer
+            </Link>
+          </div>
+        </div>
+        <nav className="custom-scrollbar flex gap-2 overflow-x-auto border-t border-[var(--border)] px-4 py-2 text-xs font-semibold text-[var(--muted)] sm:hidden">
+          {[
+            { href: "/chat", label: "Assistant" },
+            { href: "/sermons", label: "Sermons" },
+            { href: "/projection", label: "Projection" },
+            { href: "/posts", label: "Enseignements" },
+            { href: "/requests", label: "Requetes" },
+            { href: "/testimonies", label: "Temoignages" },
+            { href: "/support", label: "Soutien" },
+          ].map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className="shrink-0 rounded-full border border-[var(--border)] bg-[var(--surface)]/70 px-3 py-1.5 transition hover:border-[var(--border-strong)] hover:text-[var(--foreground)]"
+            >
+              {item.label}
+            </Link>
+          ))}
+        </nav>
+      </header>
       <main className="mx-auto w-full max-w-2xl flex-1 px-6 py-14">
         <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--accent)]">
           Soutien

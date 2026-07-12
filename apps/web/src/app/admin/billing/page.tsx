@@ -13,6 +13,12 @@ function formatMoney(amount: number | null, currency: string | null) {
   return `${amount ?? 0} ${currency ?? ""}`.trim();
 }
 
+function purposeLabel(purpose: string | null) {
+  if (purpose === "credits") return "Crédits IA";
+  if (purpose === "support_donation") return "Don de soutien";
+  return "Abonnement";
+}
+
 export default async function AdminBillingPage() {
   const { supabase } = await requireAdmin();
 
@@ -54,7 +60,7 @@ export default async function AdminBillingPage() {
               <div key={tx.id} className="grid gap-3 px-4 py-3 text-sm md:grid-cols-[1.3fr_1fr_1fr]">
                 <div>
                   <p className="font-medium text-[var(--foreground)]">
-                    {tx.purpose === "credits" ? "Crédits IA" : "Abonnement"}
+                    {purposeLabel(tx.purpose)}
                   </p>
                   <p className="mt-1 text-xs text-[var(--muted)]">{tx.user_id}</p>
                 </div>
