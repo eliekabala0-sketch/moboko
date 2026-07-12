@@ -18,11 +18,11 @@ async function startSupportCheckout(amount: number, payment: CheckoutPaymentDeta
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ purpose: "support_donation", amount, payment }),
+    body: JSON.stringify({ purpose: "support_donation", amount, payment, idempotencyKey: crypto.randomUUID() }),
   });
-  const data = (await res.json()) as { checkout_url?: string; error?: string };
+  const data = (await res.json()) as { checkout_url?: string; error?: string; message?: string };
   if (!res.ok || !data.checkout_url) {
-    throw new Error("Le paiement n'a pas pu etre lance. Reessayez.");
+    throw new Error(data.message ?? "Le paiement n'a pas pu etre lance. Reessayez plus tard.");
   }
   window.location.href = data.checkout_url;
 }

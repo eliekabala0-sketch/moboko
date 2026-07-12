@@ -51,19 +51,43 @@ function parsePaymentDetails(raw: unknown): PaymentDetails | null {
 
 function parseCheckout(
   raw: unknown,
-): { purpose: "subscription" | "credits" | "support_donation"; amount?: number; payment: PaymentDetails } | null {
+): {
+  purpose: "subscription" | "credits" | "support_donation";
+  amount?: number;
+  planId?: string | null;
+  packId?: string | null;
+  idempotencyKey?: string | null;
+  payment: PaymentDetails;
+} | null {
   if (!raw || typeof raw !== "object") return null;
-  const obj = raw as { purpose?: unknown; amount?: unknown; payment?: unknown };
+  const obj = raw as {
+    purpose?: unknown;
+    amount?: unknown;
+    planId?: unknown;
+    packId?: unknown;
+    idempotencyKey?: unknown;
+    payment?: unknown;
+  };
   const payment = parsePaymentDetails(obj.payment);
   if (!payment) return null;
   const purpose = obj.purpose;
-  if (purpose === "subscription" || purpose === "credits") return { purpose, payment };
+  const idempotencyKey = cleanText(obj.idempotencyKey, 80) || null;
+  if (purpose === "subscription") {
+    const planId = cleanText(obj.planId, 80);
+    if (!planId) return null;
+    return { purpose, planId, idempotencyKey, payment };
+  }
+  if (purpose === "credits") {
+    const packId = cleanText(obj.packId, 80);
+    if (!packId) return null;
+    return { purpose, packId, idempotencyKey, payment };
+  }
   if (purpose === "support_donation") {
     const amount = typeof obj.amount === "number" ? obj.amount : Number(obj.amount);
     if (!Number.isFinite(amount)) return null;
-    const cents = Math.round(amount * 100);
-    if (cents < 500 || cents > 199900) return null;
-    return { purpose, amount: cents, payment };
+    const dollars = Math.floor(amount);
+    if (dollars < 5 || dollars > 1999 || dollars !== amount) return null;
+    return { purpose, amount: dollars, idempotencyKey, payment };
   }
   return null;
 }
@@ -75,7 +99,14 @@ export async function POST(request: Request) {
   const { user, error: authErr } = await getUserFromApiRequest(request);
   if (authErr || !user) return NextResponse.json({ error: "non_authentifie" }, { status: 401 });
 
-  let parsed: { purpose: "subscription" | "credits" | "support_donation"; amount?: number; payment: PaymentDetails } | null = null;
+  let parsed: {
+    purpose: "subscription" | "credits" | "support_donation";
+    amount?: number;
+    planId?: string | null;
+    packId?: string | null;
+    idempotencyKey?: string | null;
+    payment: PaymentDetails;
+  } | null = null;
   try {
     parsed = parseCheckout(await request.json());
   } catch {
@@ -90,12 +121,28 @@ export async function POST(request: Request) {
     userPhone: user.phone ?? null,
     purpose: parsed.purpose,
     amount: parsed.amount,
+    planId: parsed.planId,
+    packId: parsed.packId,
+    idempotencyKey: parsed.idempotencyKey,
     payment: parsed.payment,
     siteUrl: getSiteUrl(),
   });
   if (!checkout.ok) {
-    const status = checkout.error === "provider_not_configured" ? 503 : 502;
-    return NextResponse.json({ error: checkout.error, detail: checkout.detail }, { status });
+    const status =
+      checkout.error === "provider_not_configured"
+        ? 503
+        : checkout.error === "duplicate_checkout"
+          ? 409
+          : 502;
+    const message =
+      checkout.error === "duplicate_checkout"
+        ? "Une demande est deja en cours pour cette action."
+        : checkout.detail === "montant_incoherent" || checkout.detail === "devise_incoherente"
+          ? "Le paiement n'a pas pu etre lance. Reessayez plus tard."
+          : checkout.error === "provider_not_configured"
+            ? "Paiement en ligne indisponible pour le moment."
+            : "Le paiement n'a pas pu etre lance. Reessayez plus tard.";
+    return NextResponse.json({ error: checkout.error, message }, { status });
   }
 
   return NextResponse.json({ ok: true, checkout_url: checkout.checkoutUrl });

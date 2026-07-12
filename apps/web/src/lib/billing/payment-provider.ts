@@ -26,7 +26,7 @@ export type CheckoutRequest = {
 
 export type CheckoutResult =
   | { ok: true; provider: PaymentProviderName; externalId: string; checkoutUrl: string }
-  | { ok: false; error: "provider_not_configured" | "provider_error"; detail?: string };
+  | { ok: false; error: "provider_not_configured" | "provider_error" | "duplicate_checkout"; detail?: string };
 
 export type PaymentWebhookEvent =
   | {
@@ -110,6 +110,26 @@ function asNumberOrNull(x: unknown): number | null {
   if (typeof x === "number" && Number.isFinite(x)) return x;
   if (typeof x === "string" && x.trim() && Number.isFinite(Number(x))) return Number(x);
   return null;
+}
+
+function responseAmount(data: Record<string, unknown>, providerPayment: Record<string, unknown> | null) {
+  return (
+    asNumberOrNull(data.amount) ??
+    asNumberOrNull(data.expected_amount) ??
+    asNumberOrNull(data.provider_amount) ??
+    asNumberOrNull(providerPayment?.amount) ??
+    asNumberOrNull(providerPayment?.expectedAmount)
+  );
+}
+
+function responseCurrency(data: Record<string, unknown>, providerPayment: Record<string, unknown> | null) {
+  return (
+    asString(data.currency) ||
+    asString(data.expected_currency) ||
+    asString(data.provider_currency) ||
+    asString(providerPayment?.currency) ||
+    asString(providerPayment?.expectedCurrency)
+  ).toUpperCase();
 }
 
 function fallbackClientPhone(raw: string | null | undefined) {
@@ -225,6 +245,14 @@ export async function createPaymentCheckout(req: CheckoutRequest): Promise<Check
       asString(data.transaction_id) ||
       asString(providerPayment?.transactionId) ||
       req.transactionId;
+    const echoedAmount = responseAmount(data, providerPayment);
+    if (echoedAmount !== null && echoedAmount !== req.amount) {
+      return { ok: false, error: "provider_error", detail: "montant_incoherent" };
+    }
+    const echoedCurrency = responseCurrency(data, providerPayment);
+    if (echoedCurrency && echoedCurrency !== req.currency.toUpperCase()) {
+      return { ok: false, error: "provider_error", detail: "devise_incoherente" };
+    }
     const checkoutUrl = asString(data.checkout_url) || asString(data.url);
     if (!checkoutUrl && data.success === true && asString(data.status) === "pending") {
       return { ok: true, provider: "badiboss_pay", externalId, checkoutUrl: req.successUrl };

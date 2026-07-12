@@ -1,22 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import crypto from "node:crypto";
 import {
   createPaymentCheckout,
   type CheckoutPurpose,
   type PaymentWebhookEvent,
 } from "@/lib/billing/payment-provider";
-
-export const BILLING_OFFERS = {
-  subscription: {
-    planKey: "pdf_monthly",
-    amount: 500,
-    currency: "USD",
-  },
-  credits: {
-    credits: 20,
-    amount: 300,
-    currency: "USD",
-  },
-} as const;
 
 export type CheckoutPaymentDetails = {
   customerName: string;
@@ -28,6 +16,117 @@ export type CheckoutPaymentDetails = {
   operator: string;
 };
 
+type BillingOffer =
+  | {
+      kind: "subscription";
+      offerId: string;
+      planKey: string;
+      amount: number;
+      currency: string;
+      durationDays: number;
+      monthlyAiCredits: number;
+      credits: null;
+    }
+  | {
+      kind: "credits";
+      offerId: string;
+      planKey: null;
+      amount: number;
+      currency: string;
+      durationDays: null;
+      monthlyAiCredits: null;
+      credits: number;
+    }
+  | {
+      kind: "support_donation";
+      offerId: null;
+      planKey: null;
+      amount: number;
+      currency: string;
+      durationDays: null;
+      monthlyAiCredits: null;
+      credits: null;
+    };
+
+function asPositiveInt(value: unknown) {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.floor(n));
+}
+
+function asCurrency(value: unknown) {
+  const currency = typeof value === "string" ? value.trim().toUpperCase() : "";
+  return currency || "USD";
+}
+
+async function resolveOffer(opts: {
+  admin: SupabaseClient;
+  purpose: CheckoutPurpose;
+  planId?: string | null;
+  packId?: string | null;
+  amount?: number | null;
+}): Promise<BillingOffer> {
+  if (opts.purpose === "subscription") {
+    if (!opts.planId) throw new Error("offre_indisponible");
+    const { data, error } = await opts.admin
+      .from("billing_subscription_plans")
+      .select("id, plan_key, price, currency, duration_days, monthly_ai_credits, is_active")
+      .eq("id", opts.planId)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (error || !data) throw new Error("offre_indisponible");
+    const amount = asPositiveInt(data.price);
+    if (amount <= 0) throw new Error("montant_invalide");
+    return {
+      kind: "subscription",
+      offerId: data.id as string,
+      planKey: String(data.plan_key),
+      amount,
+      currency: asCurrency(data.currency),
+      durationDays: Math.max(1, asPositiveInt(data.duration_days)),
+      monthlyAiCredits: asPositiveInt(data.monthly_ai_credits),
+      credits: null,
+    };
+  }
+
+  if (opts.purpose === "credits") {
+    if (!opts.packId) throw new Error("offre_indisponible");
+    const { data, error } = await opts.admin
+      .from("billing_credit_packs")
+      .select("id, credits, bonus_credits, price, currency, is_active")
+      .eq("id", opts.packId)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (error || !data) throw new Error("offre_indisponible");
+    const amount = asPositiveInt(data.price);
+    const credits = asPositiveInt(data.credits) + asPositiveInt(data.bonus_credits);
+    if (amount <= 0 || credits <= 0) throw new Error("montant_invalide");
+    return {
+      kind: "credits",
+      offerId: data.id as string,
+      planKey: null,
+      amount,
+      currency: asCurrency(data.currency),
+      durationDays: null,
+      monthlyAiCredits: null,
+      credits,
+    };
+  }
+
+  const amount = asPositiveInt(opts.amount);
+  if (amount < 5 || amount > 1999) throw new Error("montant_invalide");
+  return {
+    kind: "support_donation",
+    offerId: null,
+    planKey: null,
+    amount,
+    currency: "USD",
+    durationDays: null,
+    monthlyAiCredits: null,
+    credits: null,
+  };
+}
+
 export async function createBillingCheckout(opts: {
   admin: SupabaseClient;
   userId: string;
@@ -36,20 +135,19 @@ export async function createBillingCheckout(opts: {
   purpose: CheckoutPurpose;
   siteUrl: string;
   amount?: number | null;
+  planId?: string | null;
+  packId?: string | null;
+  idempotencyKey?: string | null;
   payment: CheckoutPaymentDetails;
 }) {
-  const donationAmount =
-    opts.purpose === "support_donation"
-      ? Math.max(500, Math.min(199900, Math.floor(Number(opts.amount ?? 0))))
-      : null;
-  const offer =
-    opts.purpose === "subscription"
-      ? BILLING_OFFERS.subscription
-      : opts.purpose === "credits"
-        ? BILLING_OFFERS.credits
-        : { amount: donationAmount ?? 500, currency: "USD" };
-  const planKey = opts.purpose === "subscription" ? BILLING_OFFERS.subscription.planKey : null;
-  const credits = opts.purpose === "credits" ? BILLING_OFFERS.credits.credits : null;
+  const offer = await resolveOffer({
+    admin: opts.admin,
+    purpose: opts.purpose,
+    planId: opts.planId,
+    packId: opts.packId,
+    amount: opts.amount,
+  });
+  const idempotencyKey = opts.idempotencyKey?.trim() || crypto.randomUUID();
   const { data: tx, error } = await opts.admin
     .from("payment_transactions")
     .insert({
@@ -59,11 +157,18 @@ export async function createBillingCheckout(opts: {
       currency: offer.currency,
       status: "pending",
       purpose: opts.purpose,
-      plan_key: planKey,
-      credits,
+      plan_key: offer.planKey,
+      credits: offer.credits,
+      offer_id: offer.offerId,
+      idempotency_key: idempotencyKey,
       metadata: {
         source: "checkout_request",
         support_donation: opts.purpose === "support_donation",
+        offer_kind: offer.kind,
+        amount: offer.amount,
+        currency: offer.currency,
+        duration_days: offer.durationDays,
+        monthly_ai_credits: offer.monthlyAiCredits,
         customer_name: opts.payment.customerName,
         customer_email: opts.payment.customerEmail,
         customer_phone: opts.payment.customerPhone,
@@ -75,6 +180,9 @@ export async function createBillingCheckout(opts: {
     })
     .select("id")
     .single();
+  if (error?.code === "23505") {
+    return { ok: false as const, error: "duplicate_checkout" as const };
+  }
   if (error || !tx?.id) throw new Error(error?.message ?? "transaction_creation_failed");
 
   const checkout = await createPaymentCheckout({
@@ -92,9 +200,9 @@ export async function createBillingCheckout(opts: {
     purpose: opts.purpose,
     amount: offer.amount,
     currency: offer.currency,
-    planKey,
-    credits,
-    successUrl: `${opts.siteUrl}/${opts.purpose === "support_donation" ? "support" : "billing"}?status=success`,
+    planKey: offer.planKey,
+    credits: offer.credits,
+    successUrl: `${opts.siteUrl}/${opts.purpose === "support_donation" ? "support" : "billing"}?status=pending`,
     cancelUrl: `${opts.siteUrl}/${opts.purpose === "support_donation" ? "support" : "billing"}?status=cancelled`,
   });
 
@@ -111,10 +219,17 @@ export async function createBillingCheckout(opts: {
     .update({
       external_id: checkout.externalId,
       checkout_url: checkout.checkoutUrl,
+      provider_amount: offer.amount,
+      provider_currency: offer.currency,
       metadata: {
         source: "checkout_request",
         checkout_created: true,
         support_donation: opts.purpose === "support_donation",
+        offer_kind: offer.kind,
+        amount: offer.amount,
+        currency: offer.currency,
+        duration_days: offer.durationDays,
+        monthly_ai_credits: offer.monthlyAiCredits,
         customer_name: opts.payment.customerName,
         customer_email: opts.payment.customerEmail,
         customer_phone: opts.payment.customerPhone,

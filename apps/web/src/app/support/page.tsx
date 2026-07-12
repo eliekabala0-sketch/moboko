@@ -106,12 +106,17 @@ export default async function SupportPage({
 
         {sp.status === "success" ? (
           <p className="moboko-card mt-6 border-[var(--success)]/30 bg-[var(--success-soft)] p-4 text-sm text-[var(--success)]">
-            Merci. Votre don est en cours de confirmation.
+            Paiement confirmé avec succès.
+          </p>
+        ) : null}
+        {sp.status === "pending" ? (
+          <p className="moboko-card mt-6 border-[var(--success)]/30 bg-[var(--success-soft)] p-4 text-sm text-[var(--success)]">
+            La demande de paiement a été envoyée. Confirmez-la sur votre téléphone.
           </p>
         ) : null}
         {sp.status === "cancelled" ? (
           <p className="moboko-card mt-6 border-[var(--warning)]/30 bg-[var(--warning-soft)] p-4 text-sm text-[var(--foreground)]">
-            Le paiement n&apos;a pas ete finalise.
+            Le paiement a été annulé ou refusé. Aucun montant n&apos;a été débité par Moboko.
           </p>
         ) : null}
 

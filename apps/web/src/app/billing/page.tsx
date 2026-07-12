@@ -20,6 +20,29 @@ export default async function BillingPage({ searchParams }: PageProps) {
   let balance: number | null = null;
   let billingExempt = false;
   let isLoggedIn = false;
+  let plans: {
+    id: string;
+    name: string;
+    description: string | null;
+    user_visible_text: string | null;
+    price: number;
+    currency: string;
+    duration_days: number;
+    monthly_ai_credits: number;
+    pdf_allowed: boolean;
+    normal_search_unlimited: boolean;
+    is_featured: boolean;
+  }[] = [];
+  let packs: {
+    id: string;
+    name: string;
+    description: string | null;
+    credits: number;
+    bonus_credits: number;
+    price: number;
+    currency: string;
+    is_featured: boolean;
+  }[] = [];
   let transactions: {
     id: string;
     purpose: string | null;
@@ -31,6 +54,24 @@ export default async function BillingPage({ searchParams }: PageProps) {
   }[] = [];
 
   if (supabase) {
+    const [{ data: planRows }, { data: packRows }] = await Promise.all([
+      supabase
+        .from("billing_subscription_plans")
+        .select(
+          "id, name, description, user_visible_text, price, currency, duration_days, monthly_ai_credits, pdf_allowed, normal_search_unlimited, is_featured",
+        )
+        .eq("is_active", true)
+        .order("display_order", { ascending: true })
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("billing_credit_packs")
+        .select("id, name, description, credits, bonus_credits, price, currency, is_featured")
+        .eq("is_active", true)
+        .order("display_order", { ascending: true })
+        .order("created_at", { ascending: true }),
+    ]);
+    plans = planRows ?? [];
+    packs = packRows ?? [];
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -85,12 +126,17 @@ export default async function BillingPage({ searchParams }: PageProps) {
 
         {sp.status === "success" ? (
           <p className="moboko-card mt-6 border-[var(--success)]/30 bg-[var(--success-soft)] p-4 text-sm text-[var(--success)]">
-            Paiement lancé. Confirmez la demande sur votre téléphone; l&apos;activation sera faite après confirmation.
+            Paiement confirmé avec succès.
+          </p>
+        ) : null}
+        {sp.status === "pending" ? (
+          <p className="moboko-card mt-6 border-[var(--success)]/30 bg-[var(--success-soft)] p-4 text-sm text-[var(--success)]">
+            La demande de paiement a été envoyée. Confirmez-la sur votre téléphone.
           </p>
         ) : null}
         {sp.status === "cancelled" ? (
           <p className="moboko-card mt-6 border-[var(--warning)]/30 bg-[var(--warning-soft)] p-4 text-sm text-[var(--foreground)]">
-            Le paiement n&apos;a pas été finalisé.
+            Le paiement a été annulé ou refusé. Aucun montant n&apos;a été débité par Moboko.
           </p>
         ) : null}
 
@@ -130,7 +176,7 @@ export default async function BillingPage({ searchParams }: PageProps) {
             Rechargement séparé de l’abonnement. Les crédits sont ajoutés seulement après confirmation du paiement.
           </p>
           <div className="mt-5 flex flex-wrap gap-3">
-            <BillingCheckoutButtons disabled={!isLoggedIn} mode="credits" />
+            <BillingCheckoutButtons disabled={!isLoggedIn} mode="credits" packs={packs} />
           </div>
         </section>
 
@@ -145,7 +191,7 @@ export default async function BillingPage({ searchParams }: PageProps) {
             <li>Crédits IA séparés, sauf crédits mensuels offerts par configuration admin.</li>
           </ul>
           <div className="mt-5 flex flex-wrap gap-3">
-            <BillingCheckoutButtons disabled={!isLoggedIn} mode="subscription" />
+            <BillingCheckoutButtons disabled={!isLoggedIn} mode="subscription" plans={plans} />
           </div>
         </section>
         {isLoggedIn && transactions.length > 0 ? (
@@ -156,7 +202,7 @@ export default async function BillingPage({ searchParams }: PageProps) {
                 <div key={tx.id} className="flex items-center justify-between gap-4 px-4 py-3 text-sm">
                   <div>
                     <p className="font-medium text-[var(--foreground)]">
-                      {tx.purpose === "credits" ? "Crédits IA" : "Abonnement"}
+                      {tx.purpose === "credits" ? "Crédits IA" : tx.purpose === "support_donation" ? "Soutien" : "Abonnement"}
                     </p>
                     <p className="mt-1 text-xs text-[var(--muted)]">
                       {tx.created_at ? new Date(tx.created_at).toLocaleDateString("fr-FR") : ""}
@@ -168,7 +214,13 @@ export default async function BillingPage({ searchParams }: PageProps) {
                       {tx.amount ?? 0} {tx.currency ?? ""}
                     </p>
                     <p className="mt-1 text-xs uppercase tracking-wider text-[var(--muted)]">
-                      {tx.status ?? "reçu"}
+                      {tx.status === "paid"
+                        ? "confirmé"
+                        : tx.status === "cancelled" || tx.status === "failed" || tx.status === "expired"
+                          ? "non finalisé"
+                          : tx.status === "pending"
+                            ? "en attente"
+                            : "reçu"}
                     </p>
                   </div>
                 </div>
