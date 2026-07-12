@@ -52,13 +52,6 @@ export function AuthForm() {
 
   const redirectAfterAuth = safeInternalPath(searchParams.get("next"));
   const phoneAuthEnabled = process.env.NEXT_PUBLIC_ENABLE_PHONE_AUTH === "true";
-  const googleAuthEnabled =
-    process.env.NEXT_PUBLIC_ENABLE_GOOGLE_AUTH === "true" &&
-    process.env.NEXT_PUBLIC_GOOGLE_AUTH_CONFIGURED === "true";
-  const appleAuthEnabled =
-    process.env.NEXT_PUBLIC_ENABLE_APPLE_AUTH === "true" &&
-    process.env.NEXT_PUBLIC_APPLE_AUTH_CONFIGURED === "true";
-  const hasSecondaryAuth = phoneAuthEnabled || googleAuthEnabled || appleAuthEnabled;
 
   useEffect(() => {
     const err = searchParams.get("error");
@@ -68,21 +61,6 @@ export function AuthForm() {
 
   const supabase = useCallback(() => createSupabaseBrowserClient(), []);
   const busy = loading !== null;
-
-  async function oauth(provider: "google" | "apple") {
-    setError(null);
-    setInfo(null);
-    setLoading(provider);
-    try {
-      const { error: oErr } = await supabase().auth.signInWithOAuth({
-        provider,
-        options: { redirectTo: `${getSiteUrl()}/auth/callback` },
-      });
-      if (oErr) setError(friendlyAuthError(oErr.message));
-    } finally {
-      setLoading(null);
-    }
-  }
 
   async function submitEmailPassword() {
     setError(null);
@@ -277,81 +255,54 @@ export function AuthForm() {
         ) : null}
       </div>
 
-      {hasSecondaryAuth ? (
+      {phoneAuthEnabled ? (
         <div className="space-y-4 border-t border-[var(--border)] pt-5">
-          {phoneAuthEnabled ? (
-            <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)]/50 p-5">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Telephone</p>
-              {phoneStep === "idle" ? (
-                <div className="mt-4 space-y-3">
-                  <input
-                    type="tel"
-                    inputMode="tel"
-                    autoComplete="tel"
-                    placeholder="+33 6 12 34 56 78"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="moboko-input"
-                    disabled={busy}
-                  />
-                  <button
-                    type="button"
-                    disabled={busy || !phone.trim()}
-                    onClick={() => void sendPhoneOtp()}
-                    className="moboko-btn-primary w-full py-3.5 text-[15px] disabled:opacity-45"
-                  >
-                    {loading === "phone-send" ? "Envoi..." : "Recevoir un code"}
-                  </button>
-                </div>
-              ) : (
-                <div className="mt-4 space-y-3">
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    placeholder="Code SMS"
-                    value={otp}
-                    onChange={(e) => setOtp(e.target.value)}
-                    className="moboko-input"
-                    disabled={busy}
-                  />
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void verifyPhoneOtp()}
-                    className="moboko-btn-primary w-full py-3.5 text-[15px] disabled:opacity-45"
-                  >
-                    {loading === "phone-verify" ? "Verification..." : "Valider le code"}
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : null}
-
-          {googleAuthEnabled || appleAuthEnabled ? (
-            <div className="flex flex-col gap-3">
-              {googleAuthEnabled ? (
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)]/50 p-5">
+            <p className="text-sm font-semibold text-[var(--foreground)]">Telephone</p>
+            {phoneStep === "idle" ? (
+              <div className="mt-4 space-y-3">
+                <input
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  placeholder="+33 6 12 34 56 78"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  className="moboko-input"
+                  disabled={busy}
+                />
+                <button
+                  type="button"
+                  disabled={busy || !phone.trim()}
+                  onClick={() => void sendPhoneOtp()}
+                  className="moboko-btn-primary w-full py-3.5 text-[15px] disabled:opacity-45"
+                >
+                  {loading === "phone-send" ? "Envoi..." : "Recevoir un code"}
+                </button>
+              </div>
+            ) : (
+              <div className="mt-4 space-y-3">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="Code SMS"
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value)}
+                  className="moboko-input"
+                  disabled={busy}
+                />
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => void oauth("google")}
-                  className="flex w-full items-center justify-center rounded-full border border-[var(--border)] bg-[#f8f9fb] py-3.5 text-[15px] font-semibold text-[#1f1f1f] shadow-sm transition hover:bg-white disabled:opacity-45"
+                  onClick={() => void verifyPhoneOtp()}
+                  className="moboko-btn-primary w-full py-3.5 text-[15px] disabled:opacity-45"
                 >
-                  Continuer avec Google
+                  {loading === "phone-verify" ? "Verification..." : "Valider le code"}
                 </button>
-              ) : null}
-              {appleAuthEnabled ? (
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void oauth("apple")}
-                  className="flex w-full items-center justify-center rounded-full border border-[var(--border-strong)] bg-[#0a0a0a] py-3.5 text-[15px] font-semibold text-white shadow-sm transition hover:bg-[#141414] disabled:opacity-45"
-                >
-                  Continuer avec Apple
-                </button>
-              ) : null}
-            </div>
-          ) : null}
+              </div>
+            )}
+          </div>
         </div>
       ) : null}
 
