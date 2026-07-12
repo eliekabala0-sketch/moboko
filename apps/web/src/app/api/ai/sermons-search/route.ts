@@ -77,6 +77,7 @@ export async function POST(request: Request) {
     intent_mode: null,
     intent_received: false,
     retrieval_route: null,
+    fallback_reason: null,
   };
   aiLog("request_start");
   const admin = createSupabaseServiceClient();
@@ -190,12 +191,25 @@ export async function POST(request: Request) {
     }
     aiLog("openai_called");
     diagnostics.openai_calls = 1;
-    const retrieval = await resolveHybridRetrieval(admin, openai, query, {
-      primarySlug: null,
-      turnContextBlock: null,
-      profile: "library",
-      agentFirst: true,
-    });
+    let retrieval: Awaited<ReturnType<typeof resolveHybridRetrieval>>;
+    try {
+      retrieval = await resolveHybridRetrieval(admin, openai, query, {
+        primarySlug: null,
+        turnContextBlock: null,
+        profile: "library",
+        agentFirst: true,
+      });
+    } catch (e) {
+      aiLog("failure_reason", { reason: "retrieval_failed" });
+      return NextResponse.json(
+        {
+          error: "recherche_assistee_echouee",
+          detail: e instanceof Error ? e.message : "Erreur de comprehension ou de recherche.",
+          ...(includeDiagnostics ? { diagnostics: { ...diagnostics, duration_ms: Date.now() - startedAt } } : {}),
+        },
+        { status: 502 },
+      );
+    }
     semantic = retrieval.semantic;
     candidates = retrieval.candidates;
     diagnostics.candidate_count = candidates.length;
@@ -203,6 +217,7 @@ export async function POST(request: Request) {
     diagnostics.intent_mode = semantic?.search_mode ?? null;
     diagnostics.intent_received = Boolean(semantic);
     diagnostics.retrieval_route = retrieval.usedRetrievalAgent ? "agent" : "deterministic_fallback";
+    diagnostics.fallback_reason = retrieval.fallbackReason;
     aiLog("intent_received", {
       has_intent: Boolean(semantic),
       mode: semantic?.search_mode ?? null,

@@ -72,3 +72,52 @@ export async function resolveUniqueSermonSlugByTitle(
   if (slugs.length !== 1) return null;
   return slugs[0];
 }
+
+function normalizeTitleSearch(s: string) {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export async function resolveBestSermonSlugByTitle(
+  admin: SupabaseClient,
+  titleFragment: string,
+): Promise<string | null> {
+  const t = sanitizeLikePattern(titleFragment);
+  if (t.length < 4 || t.length > 200) return null;
+  const direct = await resolveUniqueSermonSlugByTitle(admin, t);
+  if (direct) return direct;
+
+  const tokens = normalizeTitleSearch(t)
+    .split(" ")
+    .filter((x) => x.length >= 4)
+    .slice(0, 8);
+  if (tokens.length === 0) return null;
+
+  const primary = sanitizeLikePattern(tokens[0]);
+  const { data: rows } = await admin
+    .from("sermons")
+    .select("slug,title")
+    .eq("is_published", true)
+    .ilike("title", `%${primary}%`)
+    .limit(25);
+
+  let best: { slug: string; score: number } | null = null;
+  for (const row of rows ?? []) {
+    const slug = (row as { slug?: unknown }).slug;
+    const title = (row as { title?: unknown }).title;
+    if (typeof slug !== "string" || typeof title !== "string") continue;
+    const nt = normalizeTitleSearch(title);
+    let score = 0;
+    for (const token of tokens) {
+      if (nt.includes(token)) score += token.length;
+    }
+    if (nt.includes(normalizeTitleSearch(t))) score += 30;
+    if (score > (best?.score ?? 0)) best = { slug, score };
+  }
+  return best && best.score >= Math.min(8, tokens.join("").length) ? best.slug : null;
+}

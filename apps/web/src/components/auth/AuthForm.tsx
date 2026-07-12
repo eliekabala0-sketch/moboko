@@ -52,8 +52,12 @@ export function AuthForm() {
 
   const redirectAfterAuth = safeInternalPath(searchParams.get("next"));
   const phoneAuthEnabled = process.env.NEXT_PUBLIC_ENABLE_PHONE_AUTH === "true";
-  const googleAuthEnabled = process.env.NEXT_PUBLIC_ENABLE_GOOGLE_AUTH === "true";
-  const appleAuthEnabled = process.env.NEXT_PUBLIC_ENABLE_APPLE_AUTH === "true";
+  const googleAuthEnabled =
+    process.env.NEXT_PUBLIC_ENABLE_GOOGLE_AUTH === "true" &&
+    process.env.NEXT_PUBLIC_GOOGLE_AUTH_CONFIGURED === "true";
+  const appleAuthEnabled =
+    process.env.NEXT_PUBLIC_ENABLE_APPLE_AUTH === "true" &&
+    process.env.NEXT_PUBLIC_APPLE_AUTH_CONFIGURED === "true";
   const hasSecondaryAuth = phoneAuthEnabled || googleAuthEnabled || appleAuthEnabled;
 
   useEffect(() => {
