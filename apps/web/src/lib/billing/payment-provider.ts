@@ -6,6 +6,8 @@ export type CheckoutPurpose = "subscription" | "credits" | "support_donation";
 export type CheckoutRequest = {
   transactionId: string;
   userId: string;
+  userEmail?: string | null;
+  userPhone?: string | null;
   purpose: CheckoutPurpose;
   amount: number;
   currency: string;
@@ -103,6 +105,18 @@ function asNumberOrNull(x: unknown): number | null {
   return null;
 }
 
+function fallbackClientPhone(raw: string | null | undefined) {
+  const t = typeof raw === "string" ? raw.trim() : "";
+  return t || "+243000000000";
+}
+
+function fallbackClientName(raw: string | null | undefined) {
+  const t = typeof raw === "string" ? raw.trim() : "";
+  if (!t) return "Moboko";
+  const at = t.indexOf("@");
+  return at > 0 ? t.slice(0, at) : t;
+}
+
 function verifyOptionalWebhookSignature(raw: string, request: Request): boolean {
   const secret = providerSecret();
   if (!secret) return false;
@@ -156,6 +170,9 @@ export async function createPaymentCheckout(req: CheckoutRequest): Promise<Check
         transaction_id: req.transactionId,
         user_id: req.userId,
         customer_id: req.userId,
+        clientPhone: fallbackClientPhone(req.userPhone),
+        clientEmail: req.userEmail ?? undefined,
+        clientName: fallbackClientName(req.userEmail),
         purpose: req.purpose,
         amount: req.amount,
         currency: req.currency,

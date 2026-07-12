@@ -21,6 +21,8 @@ export const BILLING_OFFERS = {
 export async function createBillingCheckout(opts: {
   admin: SupabaseClient;
   userId: string;
+  userEmail?: string | null;
+  userPhone?: string | null;
   purpose: CheckoutPurpose;
   siteUrl: string;
   amount?: number | null;
@@ -57,6 +59,8 @@ export async function createBillingCheckout(opts: {
   const checkout = await createPaymentCheckout({
     transactionId: tx.id as string,
     userId: opts.userId,
+    userEmail: opts.userEmail,
+    userPhone: opts.userPhone,
     purpose: opts.purpose,
     amount: offer.amount,
     currency: offer.currency,

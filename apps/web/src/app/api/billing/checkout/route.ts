@@ -39,6 +39,8 @@ export async function POST(request: Request) {
   const checkout = await createBillingCheckout({
     admin,
     userId: user.id,
+    userEmail: user.email ?? null,
+    userPhone: user.phone ?? null,
     purpose: parsed.purpose,
     amount: parsed.amount,
     siteUrl: getSiteUrl(),
