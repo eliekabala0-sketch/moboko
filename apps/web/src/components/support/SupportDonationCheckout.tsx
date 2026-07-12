@@ -1,18 +1,24 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import {
+  CheckoutPaymentFields,
+  DEFAULT_PAYMENT_DETAILS,
+  MOBILE_MONEY_OPERATORS,
+  type CheckoutPaymentDetails,
+} from "@/components/billing/CheckoutPaymentFields";
 
 function parseAmount(raw: string) {
   const n = Number(String(raw).replace(/[^\d]/g, ""));
   return Number.isFinite(n) ? n : 0;
 }
 
-async function startSupportCheckout(amount: number) {
+async function startSupportCheckout(amount: number, payment: CheckoutPaymentDetails) {
   const res = await fetch("/api/billing/checkout", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ purpose: "support_donation", amount }),
+    body: JSON.stringify({ purpose: "support_donation", amount, payment }),
   });
   const data = (await res.json()) as { checkout_url?: string; error?: string };
   if (!res.ok || !data.checkout_url) {
@@ -43,6 +49,7 @@ export function SupportDonationCheckout({
   const [selected, setSelected] = useState<number | null>(normalized[0] ?? null);
   const [otherOpen, setOtherOpen] = useState(false);
   const [other, setOther] = useState("");
+  const [payment, setPayment] = useState<CheckoutPaymentDetails>(DEFAULT_PAYMENT_DETAILS);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,7 +65,7 @@ export function SupportDonationCheckout({
     }
     setBusy(true);
     try {
-      await startSupportCheckout(chosen);
+      await startSupportCheckout(chosen, payment);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Paiement indisponible.");
       setBusy(false);
@@ -127,7 +134,18 @@ export function SupportDonationCheckout({
         </label>
       ) : null}
 
-      <div className="mt-4 flex flex-wrap items-center gap-3">
+      <div className="mt-4 space-y-4">
+        <CheckoutPaymentFields value={payment} onChange={setPayment} disabled={busy} />
+        {valid && chosen ? (
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--foreground)]">
+            <p className="font-semibold">Resume</p>
+            <p className="mt-1 text-[var(--muted)]">
+              Don de {chosen} $ par{" "}
+              {MOBILE_MONEY_OPERATORS.find((operator) => operator.value === payment.operator)?.label ?? "Mobile Money"}
+              {payment.customerPhone ? ` - ${payment.customerPhone}` : ""}
+            </p>
+          </div>
+        ) : null}
         <button
           type="button"
           disabled={busy || !valid}
@@ -136,11 +154,6 @@ export function SupportDonationCheckout({
         >
           {busy ? "Preparation..." : `Faire un don${valid && chosen ? ` de ${chosen} $` : ""}`}
         </button>
-        {valid && chosen ? (
-          <span className="text-xs text-[var(--muted)]" role="status">
-            Montant choisi : {chosen} $
-          </span>
-        ) : null}
       </div>
 
       {error ? (

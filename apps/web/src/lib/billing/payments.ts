@@ -18,6 +18,16 @@ export const BILLING_OFFERS = {
   },
 } as const;
 
+export type CheckoutPaymentDetails = {
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  address: string;
+  city: string;
+  country: string;
+  operator: string;
+};
+
 export async function createBillingCheckout(opts: {
   admin: SupabaseClient;
   userId: string;
@@ -26,6 +36,7 @@ export async function createBillingCheckout(opts: {
   purpose: CheckoutPurpose;
   siteUrl: string;
   amount?: number | null;
+  payment: CheckoutPaymentDetails;
 }) {
   const donationAmount =
     opts.purpose === "support_donation"
@@ -50,7 +61,17 @@ export async function createBillingCheckout(opts: {
       purpose: opts.purpose,
       plan_key: planKey,
       credits,
-      metadata: { source: "checkout_request", support_donation: opts.purpose === "support_donation" },
+      metadata: {
+        source: "checkout_request",
+        support_donation: opts.purpose === "support_donation",
+        customer_name: opts.payment.customerName,
+        customer_email: opts.payment.customerEmail,
+        customer_phone: opts.payment.customerPhone,
+        address: opts.payment.address,
+        city: opts.payment.city,
+        country: opts.payment.country,
+        operator: opts.payment.operator,
+      },
     })
     .select("id")
     .single();
@@ -61,6 +82,13 @@ export async function createBillingCheckout(opts: {
     userId: opts.userId,
     userEmail: opts.userEmail,
     userPhone: opts.userPhone,
+    customerName: opts.payment.customerName,
+    customerEmail: opts.payment.customerEmail,
+    customerPhone: opts.payment.customerPhone,
+    address: opts.payment.address,
+    city: opts.payment.city,
+    country: opts.payment.country,
+    operator: opts.payment.operator,
     purpose: opts.purpose,
     amount: offer.amount,
     currency: offer.currency,
@@ -83,7 +111,18 @@ export async function createBillingCheckout(opts: {
     .update({
       external_id: checkout.externalId,
       checkout_url: checkout.checkoutUrl,
-      metadata: { source: "checkout_request", checkout_created: true, support_donation: opts.purpose === "support_donation" },
+      metadata: {
+        source: "checkout_request",
+        checkout_created: true,
+        support_donation: opts.purpose === "support_donation",
+        customer_name: opts.payment.customerName,
+        customer_email: opts.payment.customerEmail,
+        customer_phone: opts.payment.customerPhone,
+        address: opts.payment.address,
+        city: opts.payment.city,
+        country: opts.payment.country,
+        operator: opts.payment.operator,
+      },
     })
     .eq("id", tx.id as string);
 

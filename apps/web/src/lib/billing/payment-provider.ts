@@ -8,6 +8,13 @@ export type CheckoutRequest = {
   userId: string;
   userEmail?: string | null;
   userPhone?: string | null;
+  customerName?: string | null;
+  customerEmail?: string | null;
+  customerPhone?: string | null;
+  address?: string | null;
+  city?: string | null;
+  country?: string | null;
+  operator?: string | null;
   purpose: CheckoutPurpose;
   amount: number;
   currency: string;
@@ -107,12 +114,13 @@ function asNumberOrNull(x: unknown): number | null {
 
 function fallbackClientPhone(raw: string | null | undefined) {
   const t = typeof raw === "string" ? raw.trim() : "";
-  return t.replace(/^\+/, "") || "243990000000";
+  return t.replace(/[^\d+]/g, "").replace(/^\+/, "") || "243990000000";
 }
 
-function fallbackClientName(raw: string | null | undefined) {
+function fallbackClientName(raw: string | null | undefined, email: string | null | undefined) {
   const t = typeof raw === "string" ? raw.trim() : "";
   if (!t) return "Moboko";
+  if (!email) return t;
   const at = t.indexOf("@");
   return at > 0 ? t.slice(0, at) : t;
 }
@@ -170,9 +178,14 @@ export async function createPaymentCheckout(req: CheckoutRequest): Promise<Check
         transaction_id: req.transactionId,
         user_id: req.userId,
         customer_id: req.userId,
-        clientPhone: fallbackClientPhone(req.userPhone),
-        clientEmail: req.userEmail ?? undefined,
-        clientName: fallbackClientName(req.userEmail),
+        clientPhone: fallbackClientPhone(req.customerPhone ?? req.userPhone),
+        clientEmail: req.customerEmail ?? req.userEmail ?? undefined,
+        clientName: fallbackClientName(req.customerName ?? req.customerEmail ?? req.userEmail, req.customerEmail ?? req.userEmail),
+        address: req.address ?? undefined,
+        city: req.city ?? undefined,
+        country: req.country ?? undefined,
+        operator: req.operator ?? undefined,
+        payment_operator: req.operator ?? undefined,
         purpose: req.purpose,
         amount: req.amount,
         currency: req.currency,
@@ -188,6 +201,12 @@ export async function createPaymentCheckout(req: CheckoutRequest): Promise<Check
           purpose: req.purpose,
           plan_key: req.planKey ?? null,
           credits: req.credits ?? null,
+          customer_name: req.customerName ?? null,
+          customer_phone: req.customerPhone ?? null,
+          customer_email: req.customerEmail ?? null,
+          city: req.city ?? null,
+          country: req.country ?? null,
+          operator: req.operator ?? null,
         },
       }),
     });
