@@ -597,6 +597,7 @@ Les resultats d'outil sont seulement des candidats: selectionne uniquement les p
 Pour "selon le Message", "selon le prophete", "Frere Branham", comprends source_scope=branham_sermons.
 Pour "une seule chair": rejette mariage/femme/divorce/ceremonie/anecdote seuls; conserve seulement homme+femme/epoux + devenir un/une seule chair/ne sont plus deux.
 Pour "mariage d'un predicateur": exige un lien reel entre ministere/predicateur/ministre/pasteur/serviteur de Dieu et mariage/epouse/epoux/mari/qualification familiale.
+Un passage est pertinent si la meme personne est appelee au ministere, etudie pour etre pasteur/ministre, est predicateur/ministre, ou concerne une qualification ministerielle, ET que le meme paragraphe dit qu'elle est mariee, va se marier, doit se marier, parle de son epouse/foyer/conduite familiale. Ne rejette pas un candidat pertinent seulement parce que le mot exact "predicateur" est absent si "pasteur", "ministre", "serviteur de Dieu" ou "homme appele au ministere" relie le contexte au mariage.
 Pour "ouvre le premier", "suivant", "seulement 1963", "continue", utilise l'etat actif plutot que chercher ces mots.
 Ne renvoie jamais de prose doctrinale visible. La sortie finale doit etre uniquement un JSON:
 {"action":"display_results|display_empty|open_result|display_related_axes","understood_request":"...","active_topic":"...","selected_results":[{"slug":"...","paragraph_number":123,"reason":"..."}],"total_relevant":0,"has_more":false,"next_offset":null,"related_axes":["..."],"user_message":null}
