@@ -912,6 +912,7 @@ export async function runOpenAiSermonAgent(opts: {
   }
 
   const selectedRaw = Array.isArray(finalJson.selected_results) ? finalJson.selected_results : [];
+  let rescuedSelection = false;
   const selectedRefs = selectedRaw
     .filter(isRecord)
     .map((r) => ({ slug: asString(r.slug), paragraph_number: Number(r.paragraph_number) }))
@@ -930,17 +931,20 @@ export async function runOpenAiSermonAgent(opts: {
       for (const r of rescued) {
         selectedRefs.push({ slug: r.hit.slug, paragraph_number: r.hit.paragraph_number });
       }
+      rescuedSelection = selectedRefs.length > 0;
     }
   }
   diagnostics.final_selection_count = selectedRefs.length;
 
-  const totalRelevant =
-    typeof finalJson.total_relevant === "number" && Number.isFinite(finalJson.total_relevant)
+  const totalRelevant = rescuedSelection
+    ? selectedRefs.length
+    : typeof finalJson.total_relevant === "number" && Number.isFinite(finalJson.total_relevant)
       ? Math.max(0, Math.floor(finalJson.total_relevant))
       : selectedRefs.length;
-  const hasMore = finalJson.has_more === true;
-  const nextOffset =
-    typeof finalJson.next_offset === "number" && Number.isFinite(finalJson.next_offset)
+  const hasMore = rescuedSelection ? false : finalJson.has_more === true;
+  const nextOffset = rescuedSelection
+    ? null
+    : typeof finalJson.next_offset === "number" && Number.isFinite(finalJson.next_offset)
       ? Math.max(0, Math.floor(finalJson.next_offset))
       : null;
   const relatedAxes = Array.isArray(finalJson.related_axes)
