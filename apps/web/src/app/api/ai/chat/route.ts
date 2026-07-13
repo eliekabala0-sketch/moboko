@@ -286,6 +286,25 @@ export async function POST(request: Request) {
   ) {
     assistantState = stateRow.assistant_state as Record<string, unknown>;
   }
+  if (Object.keys(assistantState).length === 0) {
+    for (const row of [...history].reverse()) {
+      if (row.role !== "assistant") continue;
+      const meta =
+        row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+          ? (row.metadata as Record<string, unknown>)
+          : null;
+      const state =
+        meta?.moboko_assistant_state &&
+        typeof meta.moboko_assistant_state === "object" &&
+        !Array.isArray(meta.moboko_assistant_state)
+          ? (meta.moboko_assistant_state as Record<string, unknown>)
+          : null;
+      if (state) {
+        assistantState = state;
+        break;
+      }
+    }
+  }
 
   let userContent: string | null = null;
   const userKind: "text" | "image" | "audio" = body.mode;
@@ -419,6 +438,7 @@ export async function POST(request: Request) {
                 },
                 moboko_assistant_state: agent.assistantState,
                 moboko_openai_diagnostics: agent.diagnostics,
+                ...(agent.noCredit ? { moboko_no_credit: true } : {}),
                 moboko_tool: "responses_api_tool_loop_rehydrated",
               }
             : {
@@ -436,6 +456,7 @@ export async function POST(request: Request) {
                 },
                 moboko_assistant_state: agent.assistantState,
                 moboko_openai_diagnostics: agent.diagnostics,
+                ...(agent.noCredit ? { moboko_no_credit: true } : {}),
               };
         assistantState = agent.assistantState as Record<string, unknown>;
         console.log("[moboko-openai] conversation_linked=" + agent.diagnostics.conversation_linked);
@@ -530,7 +551,8 @@ export async function POST(request: Request) {
     let balanceAfter = balance;
     let billingSkipped = billingExempt;
 
-    if (creditCost > 0) {
+    const skipCreditForLocalNavigation = metaAssistant.moboko_no_credit === true;
+    if (creditCost > 0 && !skipCreditForLocalNavigation) {
       const reason =
         body.mode === "text"
           ? "chat_text"
@@ -570,7 +592,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const creditsDebited = billingSkipped ? 0 : creditCost;
+    const creditsDebited = billingSkipped || skipCreditForLocalNavigation ? 0 : creditCost;
 
     return NextResponse.json({
       ok: true,

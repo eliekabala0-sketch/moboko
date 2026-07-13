@@ -54,6 +54,7 @@ export type OpenAiSermonAgentResult = {
   scope: RetrievalScope;
   relatedAxes: string[];
   assistantState: ConversationAssistantState;
+  noCredit?: boolean;
   diagnostics: {
     openai_calls: number;
     tool_calls_count: number;
@@ -70,8 +71,8 @@ export type OpenAiSermonAgentResult = {
 
 const EMPTY_MESSAGE = "Aucun passage suffisamment précis n'a été trouvé pour cette formulation.";
 const MAX_TOOL_ROUNDS = 5;
-const MAX_TOOL_RESULTS_FOR_MODEL = 12;
-const DEFAULT_PAGE_SIZE = 8;
+const MAX_TOOL_RESULTS_FOR_MODEL = 16;
+const DEFAULT_PAGE_SIZE = 16;
 
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -129,10 +130,14 @@ function extractOutputText(response: JsonRecord): string {
   const parts: string[] = [];
   for (const item of output) {
     if (!isRecord(item)) continue;
+    if (typeof item.output_text === "string") parts.push(item.output_text);
+    if (typeof item.text === "string") parts.push(item.text);
     const content = item.content;
     if (!Array.isArray(content)) continue;
     for (const c of content) {
       if (isRecord(c) && c.type === "output_text" && typeof c.text === "string") {
+        parts.push(c.text);
+      } else if (isRecord(c) && typeof c.text === "string") {
         parts.push(c.text);
       }
     }
@@ -382,6 +387,56 @@ const tools = [
   },
 ] as const;
 
+const finalJsonFormat = {
+  type: "json_schema",
+  name: "moboko_assistant_final",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      action: {
+        type: "string",
+        enum: ["display_results", "display_empty", "open_result", "display_related_axes"],
+      },
+      understood_request: { type: "string" },
+      active_topic: { type: "string" },
+      selected_results: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            slug: { type: "string" },
+            paragraph_number: { type: "number" },
+            reason: { type: "string" },
+          },
+          required: ["slug", "paragraph_number", "reason"],
+        },
+      },
+      total_relevant: { type: "number" },
+      has_more: { type: "boolean" },
+      next_offset: { type: ["number", "null"] },
+      related_axes: {
+        type: "array",
+        items: { type: "string" },
+      },
+      user_message: { type: ["string", "null"] },
+    },
+    required: [
+      "action",
+      "understood_request",
+      "active_topic",
+      "selected_results",
+      "total_relevant",
+      "has_more",
+      "next_offset",
+      "related_axes",
+      "user_message",
+    ],
+  },
+} as const;
+
 async function executeTool(
   admin: SupabaseClient,
   name: string,
@@ -394,7 +449,7 @@ async function executeTool(
   },
 ): Promise<JsonRecord> {
   const pageSize = Math.max(1, Math.min(20, Math.floor(Number(args.page_size ?? DEFAULT_PAGE_SIZE))));
-  const query = asString(args.query) || ctx.userMessage;
+  const query = expandToolQueryForRecall(asString(args.query) || ctx.userMessage);
   const scope = ctx.state.active_scope ?? { kind: "library" as const };
 
   if (name === "find_sermon_by_title_or_slug") {
@@ -561,6 +616,143 @@ Etat actif compact: ${JSON.stringify({
   })}`;
 }
 
+function normIntentText(s: string) {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function expandToolQueryForRecall(query: string) {
+  const n = normIntentText(query);
+  const mentionsMarriage = /\b(mariage|marier|marie|epouse|epoux|mari)\b/.test(n);
+  const mentionsMinistry = /\b(predicateur|predication|ministre|ministere|pasteur|evangeliste|serviteur|homme de dieu)\b/.test(n);
+  if (!mentionsMarriage || !mentionsMinistry) return query;
+  return `${query} ministre predicateur pasteur evangeliste serviteur de Dieu homme appele au ministere epouse epoux mari marier mariage qualification familiale`;
+}
+
+async function deterministicLocalNavigation(opts: {
+  admin: SupabaseClient;
+  conversationId: string;
+  userMessage: string;
+  state: ConversationAssistantState;
+}): Promise<OpenAiSermonAgentResult | null> {
+  const intent = normIntentText(opts.userMessage);
+  const refs = opts.state.active_result_refs ?? [];
+  const currentIndex = Math.max(0, Math.floor(Number(opts.state.active_result_index ?? 0)));
+  const scope = opts.state.active_scope ?? { kind: "library" as const };
+  const baseDiagnostics = {
+    openai_calls: 0,
+    tool_calls_count: 1,
+    tool_names: [] as string[],
+    tool_outputs_returned: true,
+    final_selection_count: 0,
+    rehydrated_count: 0,
+    previous_response_linked: Boolean(opts.state.last_openai_response_id),
+    conversation_linked: Boolean(opts.conversationId),
+    history_items_count: 0,
+    failure_reason: null as string | null,
+  };
+
+  if (/^(ouvre|ouvrir|affiche|montre) (le )?(premier|deuxieme|deuxieme|troisieme|[0-9]+)/.test(intent)) {
+    const word = intent.match(/(premier|deuxieme|troisieme|[0-9]+)/)?.[1] ?? "1";
+    const idx = word === "premier" ? 0 : word === "deuxieme" ? 1 : word === "troisieme" ? 2 : Math.max(0, Number(word) - 1);
+    const ref = refs[idx];
+    if (!ref) return null;
+    const hits = await rehydrateSelectedRefs(opts.admin, [ref], {
+      query: opts.state.last_query ?? opts.userMessage,
+      conversationId: opts.conversationId,
+      totalCount: 1,
+      pageSize: 1,
+      hasMore: false,
+      nextOffset: null,
+    });
+    if (hits.length === 0) return null;
+    const nextState = { ...opts.state, active_result_refs: hits.map((h) => ({ slug: h.slug, paragraph_number: h.paragraph_number, title: h.title, date: h.date })), active_result_index: 0 };
+    return {
+      text: "",
+      hits,
+      totalCount: 1,
+      hasMore: false,
+      nextOffset: null,
+      pageSize: 1,
+      scope: hits[0] ? { kind: "sermon", sermon_slug: hits[0].slug } : scope,
+      relatedAxes: opts.state.related_axes ?? [],
+      assistantState: nextState,
+      noCredit: true,
+      diagnostics: { ...baseDiagnostics, tool_names: ["open_previous_result"], final_selection_count: hits.length, rehydrated_count: hits.length },
+    };
+  }
+
+  const wantsNext = /\b(suivant|apres|prochain)\b/.test(intent);
+  const wantsPrev = /\b(precedent|avant)\b/.test(intent);
+  if ((wantsNext || wantsPrev) && refs[currentIndex]) {
+    const ref = refs[currentIndex]!;
+    const neighbors = await fetchNeighborParagraphs(opts.admin, ref.slug, ref.paragraph_number);
+    const targetNumber = wantsNext ? neighbors.next_paragraph_number : neighbors.prev_paragraph_number;
+    if (!targetNumber) return null;
+    const target = { slug: ref.slug, paragraph_number: targetNumber };
+    const hits = await rehydrateSelectedRefs(opts.admin, [target], {
+      query: opts.state.last_query ?? opts.userMessage,
+      conversationId: opts.conversationId,
+      totalCount: 1,
+      pageSize: 1,
+      hasMore: false,
+      nextOffset: null,
+    });
+    if (hits.length === 0) return null;
+    const nextState = { ...opts.state, active_result_refs: hits.map((h) => ({ slug: h.slug, paragraph_number: h.paragraph_number, title: h.title, date: h.date })), active_result_index: 0 };
+    return {
+      text: "",
+      hits,
+      totalCount: 1,
+      hasMore: false,
+      nextOffset: null,
+      pageSize: 1,
+      scope: { kind: "sermon", sermon_slug: ref.slug },
+      relatedAxes: opts.state.related_axes ?? [],
+      assistantState: nextState,
+      noCredit: true,
+      diagnostics: { ...baseDiagnostics, tool_names: ["get_neighbor_paragraphs"], final_selection_count: hits.length, rehydrated_count: hits.length },
+    };
+  }
+
+  if (/\b(continue|autres|suite|voir plus)\b/.test(intent) && opts.state.next_offset != null) {
+    const result = await tool_continue_last_scope(opts.admin, {
+      last_scope: scope,
+      last_query: opts.state.last_query ?? opts.userMessage,
+      next_offset: opts.state.next_offset,
+      page_size: DEFAULT_PAGE_SIZE,
+      conversation_id: opts.conversationId,
+    });
+    const nextState = {
+      ...opts.state,
+      active_result_refs: result.results.map((h) => ({ slug: h.slug, paragraph_number: h.paragraph_number, title: h.title, date: h.date })),
+      active_result_index: 0,
+      next_offset: result.next_offset,
+      last_total_count: result.total_count,
+    };
+    return {
+      text: result.results.length === 0 ? EMPTY_MESSAGE : "",
+      hits: result.results,
+      totalCount: result.total_count,
+      hasMore: result.has_more,
+      nextOffset: result.next_offset,
+      pageSize: result.page_size,
+      scope: result.scope,
+      relatedAxes: opts.state.related_axes ?? [],
+      assistantState: nextState,
+      noCredit: true,
+      diagnostics: { ...baseDiagnostics, tool_names: ["continue_last_scope"], final_selection_count: result.results.length, rehydrated_count: result.results.length },
+    };
+  }
+
+  return null;
+}
+
 export async function runOpenAiSermonAgent(opts: {
   openai: OpenAI;
   admin: SupabaseClient;
@@ -572,6 +764,13 @@ export async function runOpenAiSermonAgent(opts: {
 }): Promise<OpenAiSermonAgentResult> {
   const model = getChatModel();
   const state = { ...opts.state };
+  const localNav = await deterministicLocalNavigation({
+    admin: opts.admin,
+    conversationId: opts.conversationId,
+    userMessage: opts.userMessage,
+    state,
+  });
+  if (localNav) return localNav;
   const previousResponseId = state.last_openai_response_id ?? null;
   const diagnostics: OpenAiSermonAgentResult["diagnostics"] = {
     openai_calls: 0,
@@ -609,6 +808,7 @@ export async function runOpenAiSermonAgent(opts: {
       ],
       tools,
       tool_choice: "auto",
+      text: { format: finalJsonFormat },
       previous_response_id: previousResponseId || undefined,
       temperature: 0.15,
       max_output_tokens: 1400,
@@ -647,6 +847,7 @@ export async function runOpenAiSermonAgent(opts: {
       input: outputs,
       tools,
       tool_choice: "auto",
+      text: { format: finalJsonFormat },
       temperature: 0.12,
       max_output_tokens: 1400,
     })) as JsonRecord;
@@ -657,6 +858,14 @@ export async function runOpenAiSermonAgent(opts: {
   const finalJson = parseFinalJson(finalText);
   if (!finalJson) {
     diagnostics.failure_reason = "final_json_missing";
+    console.error("[moboko-openai] final_json_missing", {
+      output_preview: sanitizeText(finalText, 220),
+      output_types: Array.isArray(response.output)
+        ? response.output.map((item) => (isRecord(item) ? item.type : typeof item)).slice(0, 8)
+        : [],
+      status: response.status ?? null,
+      incomplete_details: response.incomplete_details ?? null,
+    });
     throw new Error("assistant_final_json_missing");
   }
 
