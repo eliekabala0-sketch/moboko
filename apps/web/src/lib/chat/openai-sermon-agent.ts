@@ -633,6 +633,23 @@ function expandToolQueryForRecall(query: string) {
   return query;
 }
 
+function isPreacherMarriageIntent(text: string) {
+  const n = normIntentText(text);
+  const marriage = /\b(mariage|marier|marie|epouse|epoux|mari|femme)\b/.test(n);
+  const ministry = /\b(predicateur|predication|ministre|ministere|pasteur|evangeliste|serviteur|sacrificateur)\b/.test(n);
+  return marriage && ministry;
+}
+
+function preacherMarriageCandidateScore(hit: ConcordanceHit) {
+  const text = normIntentText(`${hit.title} ${hit.paragraph_text}`);
+  const ministryTerms = ["predicateur", "ministre", "ministere", "pasteur", "evangeliste", "serviteur", "sacrificateur"];
+  const marriageTerms = ["mariage", "marier", "marie", "epouser", "epouse", "epoux", "mari", "femme"];
+  const ministryHits = ministryTerms.filter((t) => text.includes(t)).length;
+  const marriageHits = marriageTerms.filter((t) => text.includes(t)).length;
+  if (ministryHits === 0 || marriageHits === 0) return 0;
+  return 30 + ministryHits * 8 + marriageHits * 6;
+}
+
 async function deterministicLocalNavigation(opts: {
   admin: SupabaseClient;
   conversationId: string;
@@ -900,6 +917,21 @@ export async function runOpenAiSermonAgent(opts: {
     .map((r) => ({ slug: asString(r.slug), paragraph_number: Number(r.paragraph_number) }))
     .filter((r) => r.slug && Number.isFinite(r.paragraph_number) && r.paragraph_number >= 1)
     .slice(0, 20);
+  if (selectedRefs.length === 0) {
+    const intentText = `${opts.userMessage} ${state.active_topic ?? ""} ${state.last_query ?? ""}`;
+    if (isPreacherMarriageIntent(intentText)) {
+      const requestedYear = normIntentText(opts.userMessage).match(/\b(19[0-9]{2}|20[0-9]{2})\b/)?.[1] ?? null;
+      const rescued = [...toolResultsByKey.values()]
+        .map((hit) => ({ hit, score: preacherMarriageCandidateScore(hit) }))
+        .filter((x) => x.score > 0)
+        .filter((x) => !requestedYear || String(x.hit.date ?? "").startsWith(requestedYear))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3);
+      for (const r of rescued) {
+        selectedRefs.push({ slug: r.hit.slug, paragraph_number: r.hit.paragraph_number });
+      }
+    }
+  }
   diagnostics.final_selection_count = selectedRefs.length;
 
   const totalRelevant =
