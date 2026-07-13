@@ -51,6 +51,40 @@ export function buildParagraphExcerpt(
 export function extractSearchTerms(searchQuery: string): string[] {
   const q = searchQuery.trim();
   if (!q) return [];
+  const stop = new Set([
+    "a",
+    "au",
+    "aux",
+    "ce",
+    "ces",
+    "de",
+    "des",
+    "du",
+    "en",
+    "et",
+    "la",
+    "le",
+    "les",
+    "nous",
+    "ou",
+    "où",
+    "par",
+    "pour",
+    "que",
+    "qui",
+    "sur",
+    "un",
+    "une",
+    "vous",
+  ]);
+  const normalized = q
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  const conceptTerms =
+    /\b(seule chair|devien|deux|epoux|mariage|mari|femme)\b/.test(normalized)
+      ? ["une seule chair", "deviennent un", "mari et femme", "homme et femme", "ne sont plus deux"]
+      : [];
   const quoted = Array.from(q.matchAll(/"([^"]{2,})"/g))
     .map((m) => m[1]?.trim())
     .filter((t): t is string => Boolean(t));
@@ -58,8 +92,9 @@ export function extractSearchTerms(searchQuery: string): string[] {
     .replace(/"([^"]*)"/g, " ")
     .split(/\s+/)
     .map((t) => t.replace(/^["']|["']$/g, "").trim())
-    .filter((t) => t.length > 1);
-  return Array.from(new Set([...quoted, ...words])).sort((a, b) => b.length - a.length);
+    .filter((t) => t.length > 2)
+    .filter((t) => !stop.has(t.toLowerCase()));
+  return Array.from(new Set([...conceptTerms, ...quoted, ...words])).sort((a, b) => b.length - a.length);
 }
 
 export function paragraphMatchesQuery(paragraphText: string, searchQuery: string): boolean {

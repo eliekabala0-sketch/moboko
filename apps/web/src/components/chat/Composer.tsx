@@ -215,9 +215,6 @@ export function Composer({
             )}
           </button>
         </div>
-        <p className="text-center text-[11px] leading-relaxed text-[var(--muted)] sm:text-left">
-          Traitement côté serveur (OpenAI) — crédits débités selon les paramètres admin.
-        </p>
       </div>
     </div>
   );

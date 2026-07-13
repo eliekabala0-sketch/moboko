@@ -228,7 +228,9 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
           {showEmptyOk ? (
             <div className="moboko-card p-6">
               <p className="text-sm leading-relaxed text-[var(--foreground)]">
-                Aucun passage suffisamment précis n&apos;a été trouvé pour cette recherche.
+                Aucun passage suffisamment précis n&apos;a été trouvé pour cette formulation.
+                <br />
+                Élargir à : union de l&apos;homme et de la femme dans le mariage.
               </p>
             </div>
           ) : (

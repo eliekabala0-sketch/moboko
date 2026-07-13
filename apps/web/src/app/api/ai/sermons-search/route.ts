@@ -1,7 +1,8 @@
-import { fetchSermonSearchCandidates, type SermonParagraphCandidate } from "@/lib/sermons/ai-sermon-search-server";
+import type { SermonParagraphCandidate } from "@/lib/sermons/ai-sermon-search-server";
 import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
 import { getOpenAIClient } from "@/lib/ai/moboko-chat";
 import { resolveHybridRetrieval } from "@/lib/sermons/retrieval-resolve";
+import { fetchConcordanceSemanticCandidates } from "@/lib/sermons/concordance-fetch-candidates";
 import { ensureMonthlySubscriptionCredits } from "@/lib/billing/subscription-credits";
 import { getUserFromApiRequest } from "@/lib/supabase/api-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
@@ -17,7 +18,7 @@ export const maxDuration = 90;
 
 type Body = { query?: string; offset?: number; pageSize?: number };
 const CONCORDANCE_PAGE_SIZE = 20;
-const EMPTY_CONCORDANCE_MESSAGE = "Aucun passage correspondant n'a ete trouve.";
+const EMPTY_CONCORDANCE_MESSAGE = "Aucun passage suffisamment précis n'a été trouvé pour cette formulation.";
 
 function aiLog(event: string, meta: Record<string, unknown> = {}) {
   if (process.env.MOBOKO_ASSISTANT_AI_DEBUG !== "1") return;
@@ -72,6 +73,7 @@ export async function POST(request: Request) {
   const diagnostics: Record<string, unknown> = {
     openai_calls: 0,
     candidate_count: 0,
+    relevant_count: 0,
     rehydrated_count: 0,
     used_fast_search_rpc: false,
     intent_mode: null,
@@ -176,8 +178,9 @@ export async function POST(request: Request) {
   let semantic: Awaited<ReturnType<typeof resolveHybridRetrieval>>["semantic"] = null;
   let candidates: SermonParagraphCandidate[];
   if (isContinuationPage) {
-    candidates = await fetchSermonSearchCandidates(admin, query);
+    candidates = await fetchConcordanceSemanticCandidates(admin, query, null, "library");
     diagnostics.candidate_count = candidates.length;
+    diagnostics.relevant_count = candidates.length;
     diagnostics.used_fast_search_rpc = candidates.some((c) => c.prev_paragraph_number !== undefined || c.next_paragraph_number !== undefined);
     diagnostics.retrieval_route = "continuation";
     aiLog("candidate_count", { count: candidates.length, continuation: true });
@@ -213,6 +216,7 @@ export async function POST(request: Request) {
     semantic = retrieval.semantic;
     candidates = retrieval.candidates;
     diagnostics.candidate_count = candidates.length;
+    diagnostics.relevant_count = candidates.length;
     diagnostics.used_fast_search_rpc = candidates.some((c) => c.prev_paragraph_number !== undefined || c.next_paragraph_number !== undefined);
     diagnostics.intent_mode = semantic?.search_mode ?? null;
     diagnostics.intent_received = Boolean(semantic);
@@ -224,6 +228,17 @@ export async function POST(request: Request) {
       routed_by: retrieval.usedRetrievalAgent ? "agent" : "deterministic_fallback",
     });
     aiLog("candidate_count", { count: candidates.length });
+  }
+
+  if (includeDiagnostics) {
+    diagnostics.relevance_audit = candidates.slice(0, 40).map((c) => ({
+      paragraph_number: c.paragraph_number,
+      sermon_slug: c.slug,
+      matched_required_concepts: c.relevance_audit?.matched_required_concepts ?? [],
+      semantic_score: c.relevance_audit?.semantic_score ?? null,
+      exclusion_triggered: c.relevance_audit?.exclusion_triggered ?? null,
+      final_selected: c.relevance_audit?.final_selected ?? null,
+    }));
   }
 
   let balanceAfter = balance;
@@ -263,6 +278,7 @@ export async function POST(request: Request) {
       has_more: false,
       next_offset: null,
       message: EMPTY_CONCORDANCE_MESSAGE,
+      suggestion: "Élargir à : union de l'homme et de la femme dans le mariage.",
       credits_charged: creditsCharged,
       credit_cost: creditCost,
       balance_after: balanceAfter,

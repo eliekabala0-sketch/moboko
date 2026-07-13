@@ -14,7 +14,10 @@ import { fetchSingleParagraphCandidate } from "@/lib/sermons/retrieval-direct";
 import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
 import { sortSermonOccurrencesOldestFirst } from "@/lib/sermons/source-order";
 import { runRetrievalAgent } from "@/lib/sermons/retrieval-agent";
-import { fetchConcordanceSemanticCandidates } from "@/lib/sermons/concordance-fetch-candidates";
+import {
+  fetchConcordanceSemanticCandidates,
+  shouldKeepStrictSemanticEmpty,
+} from "@/lib/sermons/concordance-fetch-candidates";
 import { fetchSermonSearchCandidates, type SermonParagraphCandidate } from "@/lib/sermons/ai-sermon-search-server";
 import { ensureMonthlySubscriptionCredits } from "@/lib/billing/subscription-credits";
 import {
@@ -83,7 +86,7 @@ function pathBelongsToUser(path: string, userId: string) {
   return path.startsWith(`${userId}/`);
 }
 
-const EMPTY_CONCORDANCE_MESSAGE = "Aucun paragraphe exact trouvé pour cette recherche.";
+const EMPTY_CONCORDANCE_MESSAGE = "Aucun passage suffisamment précis n'a été trouvé pour cette formulation.";
 
 async function rehydrateChatConcordanceHits(
   admin: NonNullable<ReturnType<typeof createSupabaseServiceClient>>,
@@ -474,7 +477,7 @@ export async function POST(request: Request) {
         if (semantic) {
           candidates = await fetchConcordanceSemanticCandidates(admin, userContent, semantic, "chat");
         }
-        if (candidates.length === 0) {
+        if (candidates.length === 0 && !shouldKeepStrictSemanticEmpty(userContent, semantic)) {
           usedFallbackSearch = true;
           candidates = await fetchSermonSearchCandidates(admin, userContent);
         }

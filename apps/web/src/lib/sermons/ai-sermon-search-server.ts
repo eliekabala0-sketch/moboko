@@ -15,6 +15,12 @@ export type SermonParagraphCandidate = {
   prev_paragraph_text?: string | null;
   next_paragraph_number?: number | null;
   next_paragraph_text?: string | null;
+  relevance_audit?: {
+    matched_required_concepts: string[];
+    semantic_score: number;
+    exclusion_triggered: string | null;
+    final_selected: boolean;
+  };
 };
 
 const FR_STOP = new Set([

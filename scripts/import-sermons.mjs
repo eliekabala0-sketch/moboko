@@ -74,7 +74,7 @@ function parsePreachedDate(str) {
   const m = str.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
   if (!m) return null;
   let y = parseInt(m[3], 10);
-  if (y < 100) y += y >= 70 ? 1900 : 2000;
+  if (y < 100) y += 1900;
   const mo = parseInt(m[2], 10);
   const d = parseInt(m[1], 10);
   if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
@@ -85,6 +85,9 @@ function parsePreachedDate(str) {
 function parseYear(anneeLine, preachedIso) {
   if (anneeLine && /^\d{4}$/.test(anneeLine.trim())) {
     return parseInt(anneeLine.trim(), 10);
+  }
+  if (anneeLine && /^\d{2}$/.test(anneeLine.trim())) {
+    return 1900 + parseInt(anneeLine.trim(), 10);
   }
   if (preachedIso) return parseInt(preachedIso.slice(0, 4), 10);
   return null;
