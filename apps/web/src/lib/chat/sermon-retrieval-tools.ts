@@ -23,9 +23,48 @@ function tokenize(s: string): string[] {
     .filter((x) => x.length >= 4);
 }
 
+function mentionsPreacherMarriage(query: string): boolean {
+  const q = normLoose(query);
+  const marriage = /\b(mariage|marier|marie|epouse|epoux|mari)\b/.test(q);
+  const ministry = /\b(predicateur|predication|ministre|ministere|pasteur|evangeliste|serviteur|homme de dieu)\b/.test(q);
+  return marriage && ministry;
+}
+
+function buildRecallVariantQueries(query: string): string[] | undefined {
+  if (!mentionsPreacherMarriage(query)) return undefined;
+  return [
+    "mariage predicateur",
+    "mariage ministre",
+    "mariage pasteur",
+    "epouse predicateur",
+    "epouse ministre",
+    "pasteur epouse",
+    "appele au ministere mariage",
+  ];
+}
+
+function preacherMarriageScore(textRaw: string): number {
+  const text = normLoose(textRaw);
+  const ministryTerms = [
+    "predicateur",
+    "ministre",
+    "ministere",
+    "pasteur",
+    "evangeliste",
+    "serviteur de dieu",
+    "sacrificateur",
+  ];
+  const marriageTerms = ["mariage", "marier", "marie", "epouser", "epouse", "epoux", "mari", "femme"];
+  const ministryHits = ministryTerms.filter((t) => text.includes(t)).length;
+  const marriageHits = marriageTerms.filter((t) => text.includes(t)).length;
+  if (ministryHits === 0 || marriageHits === 0) return 0;
+  return 30 + ministryHits * 8 + marriageHits * 6;
+}
+
 function rankCandidatesByQuery(candidates: SermonParagraphCandidate[], query: string): SermonParagraphCandidate[] {
   const qTokens = tokenize(query).slice(0, 10);
   if (qTokens.length === 0) return candidates;
+  const preacherMarriage = mentionsPreacherMarriage(query);
   const scored = candidates.map((c) => {
     const text = normLoose(c.paragraph_text);
     const title = normLoose(c.title);
@@ -41,9 +80,10 @@ function rankCandidatesByQuery(candidates: SermonParagraphCandidate[], query: st
     // Favor phrase proximity for longer clues.
     const qNorm = normLoose(query);
     if (qNorm.length >= 20 && text.includes(qNorm)) score += 12;
+    if (preacherMarriage) score += preacherMarriageScore(`${c.title} ${c.paragraph_text}`);
     return { c, score, matches };
   });
-  const strict = scored.filter((x) => x.matches >= 2);
+  const strict = scored.filter((x) => x.matches >= 2 || (preacherMarriage && preacherMarriageScore(`${x.c.title} ${x.c.paragraph_text}`) > 0));
   const pool = strict.length > 0 ? strict : scored;
   pool.sort((a, b) => b.score - a.score);
   return pool.map((x) => x.c);
@@ -384,7 +424,7 @@ export async function tool_search_paragraphs_global(
   if (!query) {
     return { ok: true, results: [], total_count: 0, scope, next_offset: null, offset: Math.max(0, offset), page_size: Math.max(1, Math.min(50, pageSize)), has_more: false };
   }
-  const candidates = await fetchSermonSearchCandidates(admin, query);
+  const candidates = await fetchSermonSearchCandidates(admin, query, { queries: buildRecallVariantQueries(query) });
   const ranked = sortSermonOccurrencesOldestFirst(rankCandidatesByQuery(candidates, query));
   const pg = pageSlice(ranked, offset, pageSize);
   const results = await Promise.all(
@@ -451,7 +491,7 @@ export async function tool_search_paragraphs_in_sermon(
   if (!slug || !query) {
     return { ok: true, results: [], total_count: 0, scope, next_offset: null, offset: Math.max(0, offset), page_size: Math.max(1, Math.min(50, pageSize)), has_more: false };
   }
-  const candidates = (await fetchSermonSearchCandidates(admin, query)).filter((c) => c.slug === slug);
+  const candidates = (await fetchSermonSearchCandidates(admin, query, { queries: buildRecallVariantQueries(query) })).filter((c) => c.slug === slug);
   const ranked = sortSermonOccurrencesOldestFirst(rankCandidatesByQuery(candidates, query));
   const pg = pageSlice(ranked, offset, pageSize);
   const results = await Promise.all(

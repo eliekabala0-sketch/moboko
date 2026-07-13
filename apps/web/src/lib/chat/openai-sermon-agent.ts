@@ -628,11 +628,7 @@ function normIntentText(s: string) {
 }
 
 function expandToolQueryForRecall(query: string) {
-  const n = normIntentText(query);
-  const mentionsMarriage = /\b(mariage|marier|marie|epouse|epoux|mari)\b/.test(n);
-  const mentionsMinistry = /\b(predicateur|predication|ministre|ministere|pasteur|evangeliste|serviteur|homme de dieu)\b/.test(n);
-  if (!mentionsMarriage || !mentionsMinistry) return query;
-  return `${query} ministre predicateur pasteur evangeliste serviteur de Dieu homme appele au ministere epouse epoux mari marier mariage qualification familiale`;
+  return query;
 }
 
 async function deterministicLocalNavigation(opts: {
