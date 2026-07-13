@@ -1,4 +1,5 @@
 import { requireAdmin } from "@/lib/admin/require-admin";
+import { CreditPackForm, SubscriptionPlanForm } from "@/components/admin/BillingOfferForms";
 import { saveCreditPackAction, saveSubscriptionPlanAction } from "./actions";
 
 export const metadata = {
@@ -18,6 +19,16 @@ function purposeLabel(purpose: string | null) {
   if (purpose === "credits") return "Crédits IA";
   if (purpose === "support_donation") return "Don de soutien";
   return "Abonnement";
+}
+
+function statusLabel(status: string | null) {
+  if (status === "paid" || status === "completed" || status === "success") return "Confirme";
+  if (status === "pending") return "En attente";
+  if (status === "cancelled") return "Annule";
+  if (status === "failed") return "Refuse";
+  if (status === "expired") return "Expire";
+  if (status === "provider_unavailable") return "Provider indisponible";
+  return "Recu";
 }
 
 export default async function AdminBillingPage() {
@@ -69,39 +80,12 @@ export default async function AdminBillingPage() {
         <h2 className="text-lg font-semibold text-[var(--foreground)]">Plans d&apos;abonnement</h2>
         <div className="mt-4 grid gap-4">
           {[...(plans ?? []), null].map((plan, index) => (
-            <form key={plan?.id ?? "new-plan"} action={saveSubscriptionPlanAction} className="moboko-card grid gap-3 p-4 text-sm md:grid-cols-4">
-              <input type="hidden" name="id" defaultValue={plan?.id ?? ""} />
-              <input name="name" className="moboko-input" placeholder="Nom" defaultValue={plan?.name ?? ""} required />
-              <input name="price" className="moboko-input" type="number" min={1} placeholder="Prix" defaultValue={plan?.price ?? ""} required />
-              <input name="currency" className="moboko-input" placeholder="Devise" defaultValue={plan?.currency ?? "USD"} />
-              <input name="duration_days" className="moboko-input" type="number" min={1} placeholder="Jours" defaultValue={plan?.duration_days ?? 30} />
-              <input name="plan_key" className="moboko-input" placeholder="Cle interne" defaultValue={plan?.plan_key ?? ""} />
-              <input name="monthly_ai_credits" className="moboko-input" type="number" min={0} placeholder="Credits IA mensuels" defaultValue={plan?.monthly_ai_credits ?? 0} />
-              <input name="export_limit" className="moboko-input" type="number" min={0} placeholder="Exports" defaultValue={plan?.export_limit ?? ""} />
-              <input name="display_order" className="moboko-input" type="number" min={0} placeholder="Ordre" defaultValue={plan?.display_order ?? index + 10} />
-              <textarea name="description" className="moboko-input md:col-span-2" rows={2} placeholder="Description" defaultValue={plan?.description ?? ""} />
-              <textarea name="user_visible_text" className="moboko-input md:col-span-2" rows={2} placeholder="Texte visible utilisateur" defaultValue={plan?.user_visible_text ?? ""} />
-              <textarea name="benefits" className="moboko-input md:col-span-4" rows={2} placeholder="Avantages, un par ligne" defaultValue="" />
-              <label className="flex items-center gap-2 text-[var(--muted)]">
-                <input name="normal_search_unlimited" type="checkbox" defaultChecked={plan?.normal_search_unlimited ?? true} />
-                Recherche illimitee
-              </label>
-              <label className="flex items-center gap-2 text-[var(--muted)]">
-                <input name="pdf_allowed" type="checkbox" defaultChecked={plan?.pdf_allowed ?? true} />
-                PDF
-              </label>
-              <label className="flex items-center gap-2 text-[var(--muted)]">
-                <input name="is_featured" type="checkbox" defaultChecked={plan?.is_featured ?? false} />
-                Mis en avant
-              </label>
-              <label className="flex items-center gap-2 text-[var(--muted)]">
-                <input name="is_active" type="checkbox" defaultChecked={plan?.is_active ?? true} />
-                Actif
-              </label>
-              <button type="submit" className="moboko-btn-primary px-4 py-2 text-sm md:col-span-4">
-                {plan ? "Enregistrer ce plan" : "Ajouter le plan"}
-              </button>
-            </form>
+            <SubscriptionPlanForm
+              key={plan?.id ?? "new-plan"}
+              plan={plan}
+              index={index}
+              action={saveSubscriptionPlanAction}
+            />
           ))}
         </div>
       </section>
@@ -110,28 +94,7 @@ export default async function AdminBillingPage() {
         <h2 className="text-lg font-semibold text-[var(--foreground)]">Packs de crédits</h2>
         <div className="mt-4 grid gap-4">
           {[...(packs ?? []), null].map((pack, index) => (
-            <form key={pack?.id ?? "new-pack"} action={saveCreditPackAction} className="moboko-card grid gap-3 p-4 text-sm md:grid-cols-4">
-              <input type="hidden" name="id" defaultValue={pack?.id ?? ""} />
-              <input name="name" className="moboko-input" placeholder="Nom" defaultValue={pack?.name ?? ""} required />
-              <input name="credits" className="moboko-input" type="number" min={1} placeholder="Credits" defaultValue={pack?.credits ?? ""} required />
-              <input name="bonus_credits" className="moboko-input" type="number" min={0} placeholder="Bonus" defaultValue={pack?.bonus_credits ?? 0} />
-              <input name="price" className="moboko-input" type="number" min={1} placeholder="Prix" defaultValue={pack?.price ?? ""} required />
-              <input name="currency" className="moboko-input" placeholder="Devise" defaultValue={pack?.currency ?? "USD"} />
-              <input name="pack_key" className="moboko-input" placeholder="Cle interne" defaultValue={pack?.pack_key ?? ""} />
-              <input name="display_order" className="moboko-input" type="number" min={0} placeholder="Ordre" defaultValue={pack?.display_order ?? index + 10} />
-              <textarea name="description" className="moboko-input md:col-span-4" rows={2} placeholder="Description" defaultValue={pack?.description ?? ""} />
-              <label className="flex items-center gap-2 text-[var(--muted)]">
-                <input name="is_featured" type="checkbox" defaultChecked={pack?.is_featured ?? false} />
-                Mis en avant
-              </label>
-              <label className="flex items-center gap-2 text-[var(--muted)]">
-                <input name="is_active" type="checkbox" defaultChecked={pack?.is_active ?? true} />
-                Actif
-              </label>
-              <button type="submit" className="moboko-btn-primary px-4 py-2 text-sm md:col-span-4">
-                {pack ? "Enregistrer ce pack" : "Ajouter le pack"}
-              </button>
-            </form>
+            <CreditPackForm key={pack?.id ?? "new-pack"} pack={pack} index={index} action={saveCreditPackAction} />
           ))}
         </div>
       </section>
@@ -154,7 +117,7 @@ export default async function AdminBillingPage() {
                 </div>
                 <div className="text-right">
                   <p className="text-xs font-semibold uppercase tracking-wider text-[var(--foreground)]">
-                    {tx.status ?? "reçu"}
+                    {statusLabel(tx.status)}
                   </p>
                   <p className="mt-1 text-xs text-[var(--muted)]">{formatDate(tx.completed_at ?? tx.created_at)}</p>
                 </div>

@@ -95,6 +95,29 @@ function readForm(formData: FormData) {
   };
 }
 
+async function readImportText(formData: FormData) {
+  const pasted = String(formData.get("book_text") ?? "").trim();
+  const file = formData.get("book_file");
+  if (file && typeof file === "object" && "name" in file && "size" in file) {
+    const upload = file as File;
+    if (upload.size > 0) {
+      const name = upload.name.toLowerCase();
+      const type = upload.type.toLowerCase();
+      if (name.endsWith(".pdf") || type.includes("pdf")) {
+        throw new Error("PDF detecte: exportez le livre en TXT. Un PDF scanne doit etre OCRise avant import.");
+      }
+      if (name.endsWith(".docx") || type.includes("word")) {
+        throw new Error("DOCX detecte: convertissez le document en TXT pour cet import.");
+      }
+      if (!name.endsWith(".txt") && type && !type.startsWith("text/")) {
+        throw new Error("Format non pris en charge. Utilisez un fichier TXT structure ou collez le texte.");
+      }
+      return upload.text().then((text) => text.trim());
+    }
+  }
+  return pasted;
+}
+
 export async function createHymnAction(formData: FormData) {
   const { supabase } = await adminSession();
   const hymn = readForm(formData);
@@ -129,10 +152,10 @@ export async function importHymnBookAction(formData: FormData) {
   const { supabase } = await adminSession();
   const name = String(formData.get("book_name") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim() || null;
-  const raw = String(formData.get("book_text") ?? "").trim();
+  const raw = await readImportText(formData);
   const isPublished = formData.get("is_published") === "on";
   if (!name) throw new Error("Nom du livre requis");
-  if (!raw) throw new Error("Texte du livre requis");
+  if (!raw) throw new Error("Fichier TXT ou texte du livre requis");
   const parsed = parseHymnBook(raw);
   if (parsed.length === 0) throw new Error("Aucun cantique numerote detecte");
   const bookSlug = slugify(name);

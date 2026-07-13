@@ -17,6 +17,8 @@ export async function Masthead() {
   const supabase = await createSupabaseServerClient();
   let email: string | null = null;
   let isAdmin = false;
+  let creditBalance: number | null = null;
+  let billingExempt = false;
   if (supabase) {
     const { data } = await supabase.auth.getUser();
     const user = data.user;
@@ -24,12 +26,21 @@ export async function Masthead() {
     if (user) {
       const { data: prof } = await supabase
         .from("profiles")
-        .select("role")
+        .select("role, credit_balance, is_premium, is_free_access")
         .eq("id", user.id)
         .single();
       isAdmin = prof?.role === "admin";
+      creditBalance = typeof prof?.credit_balance === "number" ? prof.credit_balance : 0;
+      billingExempt = Boolean(prof?.is_premium || prof?.is_free_access);
     }
   }
+  const creditLabel = billingExempt
+    ? "Acces offert"
+    : creditBalance === 0
+      ? "0 credit"
+      : creditBalance !== null && creditBalance <= 2
+        ? `Plus que ${creditBalance} credit${creditBalance > 1 ? "s" : ""}`
+        : `Credits : ${creditBalance ?? 0}`;
 
   return (
     <header className="sticky top-0 z-50 border-b border-[var(--border)] bg-[var(--overlay)] backdrop-blur-xl">
@@ -66,7 +77,7 @@ export async function Masthead() {
                 href="/billing"
                 className="hidden text-[13px] font-semibold text-[var(--accent)] transition hover:underline sm:inline"
               >
-                Crédits
+                {creditLabel}
               </Link>
               <span className="hidden max-w-[180px] truncate text-xs text-[var(--muted)] sm:inline">
                 {email}
@@ -75,7 +86,7 @@ export async function Masthead() {
                 href="/billing"
                 className="inline text-[13px] font-semibold text-[var(--accent)] transition hover:underline sm:hidden"
               >
-                Crédits
+                {creditLabel}
               </Link>
               <SignOutButton />
             </>

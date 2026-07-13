@@ -1,5 +1,6 @@
 import { Masthead } from "@/components/layout/Masthead";
 import { BillingCheckoutButtons } from "@/components/billing/BillingCheckoutButtons";
+import { TransactionHistory } from "@/components/billing/TransactionHistory";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import Link from "next/link";
 
@@ -91,7 +92,7 @@ export default async function BillingPage({ searchParams }: PageProps) {
         .select("id, purpose, status, amount, currency, credits, created_at")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
-        .limit(8);
+        .limit(30);
       transactions = txs ?? [];
     }
   }
@@ -148,12 +149,19 @@ export default async function BillingPage({ searchParams }: PageProps) {
                 Votre compte bénéficie d’un accès sans débit de crédits (premium ou accès offert).
               </p>
             ) : (
-              <p className="mt-2 font-display text-2xl font-semibold tabular-nums text-[var(--foreground)]">
-                {balance ?? 0}{" "}
-                <span className="text-base font-normal text-[var(--muted)]">
-                  crédit{(balance ?? 0) > 1 ? "s" : ""}
-                </span>
-              </p>
+              <>
+                <p className="mt-2 font-display text-2xl font-semibold tabular-nums text-[var(--foreground)]">
+                  {balance ?? 0}{" "}
+                  <span className="text-base font-normal text-[var(--muted)]">
+                    crédit{(balance ?? 0) > 1 ? "s" : ""}
+                  </span>
+                </p>
+                {(balance ?? 0) === 0 ? (
+                  <p className="mt-2 text-sm text-[var(--warning)]">Votre solde est épuisé.</p>
+                ) : (balance ?? 0) <= 2 ? (
+                  <p className="mt-2 text-sm text-[var(--warning)]">Votre solde est bas.</p>
+                ) : null}
+              </>
             )}
           </div>
         ) : (
@@ -197,35 +205,7 @@ export default async function BillingPage({ searchParams }: PageProps) {
         {isLoggedIn && transactions.length > 0 ? (
           <section className="scroll-mt-28 mt-12">
             <h2 className="text-lg font-semibold text-[var(--foreground)]">Historique</h2>
-            <div className="moboko-card mt-5 divide-y divide-[var(--border)] p-2">
-              {transactions.map((tx) => (
-                <div key={tx.id} className="flex items-center justify-between gap-4 px-4 py-3 text-sm">
-                  <div>
-                    <p className="font-medium text-[var(--foreground)]">
-                      {tx.purpose === "credits" ? "Crédits IA" : tx.purpose === "support_donation" ? "Soutien" : "Abonnement"}
-                    </p>
-                    <p className="mt-1 text-xs text-[var(--muted)]">
-                      {tx.created_at ? new Date(tx.created_at).toLocaleDateString("fr-FR") : ""}
-                      {tx.credits ? ` · ${tx.credits} crédits` : ""}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-medium tabular-nums text-[var(--foreground)]">
-                      {tx.amount ?? 0} {tx.currency ?? ""}
-                    </p>
-                    <p className="mt-1 text-xs uppercase tracking-wider text-[var(--muted)]">
-                      {tx.status === "paid"
-                        ? "confirmé"
-                        : tx.status === "cancelled" || tx.status === "failed" || tx.status === "expired"
-                          ? "non finalisé"
-                          : tx.status === "pending"
-                            ? "en attente"
-                            : "reçu"}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <TransactionHistory transactions={transactions} />
           </section>
         ) : null}
       </div>

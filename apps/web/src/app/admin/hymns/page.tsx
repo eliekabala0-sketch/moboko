@@ -27,6 +27,10 @@ export default async function AdminHymnsPage() {
 
       <form action={importHymnBookAction} className="moboko-card mt-8 grid gap-4 p-5">
         <h2 className="text-lg font-semibold text-[var(--foreground)]">Importer un livre complet</h2>
+        <p className="text-sm leading-relaxed text-[var(--muted)]">
+          Importez un fichier TXT structure. Les PDF scannes et DOCX doivent etre convertis en texte avant import pour
+          eviter des cantiques incomplets.
+        </p>
         <div className="grid gap-4 md:grid-cols-[1fr_1fr]">
           <label className="text-sm font-medium text-[var(--foreground)]">
             Nom du livre
@@ -38,17 +42,28 @@ export default async function AdminHymnsPage() {
           </label>
         </div>
         <label className="text-sm font-medium text-[var(--foreground)]">
-          Texte du livre
+          Fichier du livre
+          <input
+            name="book_file"
+            type="file"
+            accept=".txt,text/plain,.pdf,.docx"
+            className="moboko-input mt-2"
+          />
+          <span className="mt-1 block text-xs font-normal text-[var(--muted)]">
+            TXT recommande. PDF/DOCX seront signales si le serveur ne peut pas les lire proprement.
+          </span>
+        </label>
+        <label className="text-sm font-medium text-[var(--foreground)]">
+          Texte du livre ou apercu corrige
           <textarea
             name="book_text"
-            required
             rows={14}
             className="moboko-input mt-2 resize-y"
             placeholder={"1 Titre du cantique\nPremier couplet...\n\nRefrain: ...\n\n2 Autre cantique\n..."}
           />
         </label>
         <label className="flex items-center gap-2 text-sm text-[var(--foreground)]">
-          <input name="is_published" type="checkbox" defaultChecked className="h-4 w-4" />
+          <input name="is_published" type="checkbox" className="h-4 w-4" />
           Publier le livre et les cantiques importes
         </label>
         <button className="moboko-btn-primary w-fit px-6 py-3 text-sm">Importer le livre</button>

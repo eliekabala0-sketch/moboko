@@ -58,6 +58,12 @@ export default async function AdminLayout({
             >
               Cantiques
             </Link>
+            <Link
+              href="/admin/bible"
+              className="text-sm text-[var(--muted)] transition hover:text-[var(--foreground)]"
+            >
+              Bible
+            </Link>
           </div>
           <Link
             href="/"
