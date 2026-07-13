@@ -43,6 +43,8 @@ type Props = {
   pageSize?: number;
   /** Id conversation (chat) : requis pour POST /api/ai/chat si les hits n’ont pas _conversation_id. */
   conversationId?: string | null;
+  assistantMessageId?: string | null;
+  listId?: string | null;
   /** Texte optionnel renvoyé par l’agent (continuation.message). */
   continuationMessage?: string | null;
 };
@@ -51,6 +53,8 @@ export function ConcordanceHitsView({
   hits,
   pageSize = 20,
   conversationId: conversationIdProp,
+  assistantMessageId,
+  listId,
   continuationMessage,
 }: Props) {
   const [open, setOpen] = useState<string | null>(null);
@@ -59,6 +63,7 @@ export function ConcordanceHitsView({
   const [loadingMore, setLoadingMore] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
 
   useEffect(() => {
     setItems(hits);
@@ -104,6 +109,7 @@ export function ConcordanceHitsView({
     }
 
     setLoadingMore(true);
+    setLoadMoreError(null);
     try {
       const payload: Record<string, unknown> =
         endpoint === "/api/ai/chat"
@@ -113,6 +119,8 @@ export function ConcordanceHitsView({
               query,
               offset: nextOffset,
               pageSize: serverPageSize,
+              listId,
+              assistantMessageId,
             }
           : {
               query,
@@ -126,13 +134,13 @@ export function ConcordanceHitsView({
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
-        setVisible((v) => v + pageSize);
+        setLoadMoreError("Les résultats suivants n'ont pas pu être chargés. Réessayez.");
         return;
       }
       const data = (await res.json()) as Record<string, unknown>;
       const nextHits = coerceConcordanceHits(data.results);
       if (nextHits.length === 0) {
-        setVisible((v) => v + pageSize);
+        setLoadMoreError("Les résultats suivants n'ont pas pu être chargés. Réessayez.");
         return;
       }
       setItems((prev) => [...prev, ...nextHits]);
@@ -238,7 +246,7 @@ export function ConcordanceHitsView({
               href={readHref}
               className="moboko-btn-primary inline-flex px-5 py-2.5 text-center text-[13px]"
             >
-              Lire
+              Ouvrir le sermon
             </Link>
             <Link
               href={projectHref}
@@ -307,6 +315,7 @@ export function ConcordanceHitsView({
             : `Voir plus (${Math.max((lastMeta?._total_count ?? allHits.length) - visibleHits.length, 0)} restants)`}
         </button>
       ) : null}
+      {loadMoreError ? <p className="text-xs text-[var(--danger)]">{loadMoreError}</p> : null}
     </div>
   );
 }

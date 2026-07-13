@@ -97,6 +97,8 @@ function Bubble({
             <ConcordanceHitsView
               hits={hits}
               conversationId={conversationId}
+              assistantMessageId={msg.id}
+              listId={typeof meta?.moboko_list_id === "string" ? meta.moboko_list_id : null}
               continuationMessage={
                 typeof meta?.moboko_continuation_message === "string"
                   ? meta.moboko_continuation_message

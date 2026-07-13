@@ -17,6 +17,13 @@ type Props = {
   userId: string;
 };
 
+type ConversationListItem = {
+  id: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 async function postAiChat(body: Record<string, unknown>) {
   const res = await fetch("/api/ai/chat", {
     method: "POST",
@@ -108,28 +115,32 @@ export function ChatExperience({ userId }: Props) {
     isFreeAccess: boolean;
   } | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<ConversationListItem[]>([]);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
+  const activeConversation = useMemo(
+    () => conversations.find((c) => c.id === conversationId) ?? null,
+    [conversations, conversationId],
+  );
+  const activeTitle = activeConversation?.title?.trim() || "Nouvelle discussion";
   const conversationHistory = useMemo(() => {
-    return messages
-      .filter((m) => m.role === "user" && m.content)
-      .slice(-24)
-      .reverse()
-      .map((m) => ({
-        id: m.id,
-        preview: (m.content ?? "").replace(/\s+/g, " ").trim().slice(0, 72) || "(message)",
-        at: new Date(m.created_at).toLocaleString("fr-FR", {
-          day: "2-digit",
-          month: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-      }));
-  }, [messages]);
+    return conversations.map((c) => ({
+      id: c.id,
+      preview: c.title?.trim() || "Nouvelle discussion",
+      at: new Date(c.updated_at).toLocaleString("fr-FR", {
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+      active: c.id === conversationId,
+    }));
+  }, [conversations, conversationId]);
 
   const loadFlags = useCallback(async () => {
     const keys = [
@@ -177,6 +188,24 @@ export function ChatExperience({ userId }: Props) {
     });
   }, [supabase, userId]);
 
+  const loadConversations = useCallback(async () => {
+    const { data, error: e } = await supabase
+      .from("conversations")
+      .select("id, title, created_at, updated_at")
+      .eq("user_id", userId)
+      .order("updated_at", { ascending: false })
+      .limit(40);
+    if (e) throw e;
+    const rows = (data ?? []).map((r) => ({
+      id: String(r.id),
+      title: typeof r.title === "string" ? r.title : null,
+      created_at: String(r.created_at),
+      updated_at: String(r.updated_at),
+    }));
+    setConversations(rows);
+    return rows;
+  }, [supabase, userId]);
+
   const loadMessages = useCallback(
     async (convId: string) => {
       const { data, error: e } = await supabase
@@ -194,13 +223,20 @@ export function ChatExperience({ userId }: Props) {
     let cancelled = false;
     async function init() {
       setError(null);
-      setLoading(true);
+        setLoading(true);
       try {
         await loadFlags();
         await loadWallet();
-        const { conversationId: cid, error: convErr } =
-          await getOrCreatePrimaryConversationId(supabase, userId);
-        if (convErr) throw convErr;
+        const rows = await loadConversations();
+        let cid = rows[0]?.id ?? null;
+        if (!cid) {
+          const { conversationId: createdId, error: convErr } =
+            await getOrCreatePrimaryConversationId(supabase, userId);
+          if (convErr) throw convErr;
+          if (!createdId) throw new Error("conversation_create_failed");
+          cid = createdId;
+          await loadConversations();
+        }
         if (cancelled || !cid) return;
         setConversationId(cid);
         await loadMessages(cid);
@@ -216,7 +252,7 @@ export function ChatExperience({ userId }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [userId, supabase, loadFlags, loadWallet, loadMessages]);
+  }, [userId, supabase, loadFlags, loadWallet, loadConversations, loadMessages]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
@@ -240,6 +276,7 @@ export function ChatExperience({ userId }: Props) {
         await loadWallet();
       }
       await loadMessages(conversationId);
+      void loadConversations();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Envoi impossible");
     } finally {
@@ -272,6 +309,7 @@ export function ChatExperience({ userId }: Props) {
         await loadWallet();
       }
       await loadMessages(conversationId);
+      void loadConversations();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Image non envoyée");
     } finally {
@@ -305,6 +343,7 @@ export function ChatExperience({ userId }: Props) {
         await loadWallet();
       }
       await loadMessages(conversationId);
+      void loadConversations();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Audio non envoyé");
     } finally {
@@ -313,15 +352,96 @@ export function ChatExperience({ userId }: Props) {
   }
 
   async function handleNewChat() {
-    if (!conversationId || busy) return;
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
-      const { error: delErr } = await supabase.from("messages").delete().eq("conversation_id", conversationId);
-      if (delErr) throw delErr;
-      await loadMessages(conversationId);
+      const { data, error: insErr } = await supabase
+        .from("conversations")
+        .insert({
+          user_id: userId,
+          title: "Nouvelle discussion",
+          assistant_state: {},
+        })
+        .select("id")
+        .single();
+      if (insErr || !data?.id) throw insErr ?? new Error("conversation_create_failed");
+      const id = String(data.id);
+      setConversationId(id);
+      setMessages([]);
+      await loadConversations();
+      setHistoryOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Impossible de créer une nouvelle discussion");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSelectConversation(id: string) {
+    if (busy || id === conversationId) {
+      setHistoryOpen(false);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      setConversationId(id);
+      await loadMessages(id);
+      setHistoryOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Conversation indisponible");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeleteConversation(id: string) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { error: delErr } = await supabase.from("conversations").delete().eq("id", id);
+      if (delErr) throw delErr;
+      const rows = await loadConversations();
+      if (conversationId === id) {
+        const nextId = rows[0]?.id ?? null;
+        if (nextId) {
+          setConversationId(nextId);
+          await loadMessages(nextId);
+        } else {
+          const { data: created, error: insErr } = await supabase
+            .from("conversations")
+            .insert({ user_id: userId, title: "Nouvelle discussion", assistant_state: {} })
+            .select("id")
+            .single();
+          if (insErr || !created?.id) throw insErr ?? new Error("conversation_create_failed");
+          const createdId = String(created.id);
+          setConversationId(createdId);
+          setMessages([]);
+          await loadConversations();
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Suppression impossible");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRenameConversation(id: string, title: string) {
+    const clean = title.replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!clean || busy) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const { error: upErr } = await supabase.from("conversations").update({ title: clean }).eq("id", id);
+      if (upErr) throw upErr;
+      await loadConversations();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Renommage impossible");
     } finally {
       setBusy(false);
     }
@@ -354,7 +474,11 @@ export function ChatExperience({ userId }: Props) {
 
   return (
     <div className="grid min-h-[calc(100vh-4.25rem)] grid-cols-1 lg:grid-cols-[17rem_minmax(0,1fr)]">
-      <aside className="border-b border-[var(--border)] bg-[var(--surface)]/40 p-4 lg:border-b-0 lg:border-r">
+      <aside
+        className={`border-b border-[var(--border)] bg-[var(--surface)]/40 p-4 lg:block lg:border-b-0 lg:border-r ${
+          historyOpen ? "block" : "hidden"
+        }`}
+      >
         <button
           type="button"
           disabled={busy}
@@ -372,9 +496,37 @@ export function ChatExperience({ userId }: Props) {
           ) : (
             <ul className="max-h-[40vh] space-y-1 overflow-y-auto pr-1 lg:max-h-[calc(100vh-14rem)]">
               {conversationHistory.map((h) => (
-                <li key={h.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 px-3 py-2">
-                  <p className="line-clamp-2 text-xs leading-relaxed text-[var(--foreground)]">{h.preview}</p>
-                  <p className="mt-1 text-[10px] text-[var(--muted)]">{h.at}</p>
+                <li
+                  key={h.id}
+                  className={`rounded-xl border px-3 py-2 ${
+                    h.active
+                      ? "border-[var(--accent)]/40 bg-[var(--accent-soft)]/25"
+                      : "border-[var(--border)] bg-[var(--surface)]/60"
+                  }`}
+                >
+                  <button type="button" onClick={() => void handleSelectConversation(h.id)} className="w-full text-left">
+                    <p className="line-clamp-2 text-xs leading-relaxed text-[var(--foreground)]">{h.preview}</p>
+                    <p className="mt-1 text-[10px] text-[var(--muted)]">{h.at}</p>
+                  </button>
+                  <div className="mt-2 flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = window.prompt("Renommer le chat", h.preview);
+                        if (next != null) void handleRenameConversation(h.id, next);
+                      }}
+                      className="text-[10px] font-semibold text-[var(--accent)]"
+                    >
+                      Renommer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteConversation(h.id)}
+                      className="text-[10px] font-semibold text-[var(--danger)]"
+                    >
+                      Supprimer
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -390,9 +542,21 @@ export function ChatExperience({ userId }: Props) {
 
       <section className="flex min-h-0 flex-col">
         <div className="border-b border-[var(--border)] px-4 py-4 sm:px-6">
-          <h1 className="font-display text-xl font-semibold tracking-tight text-[var(--foreground)] sm:text-2xl">
-            Assistant Moboko
-          </h1>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setHistoryOpen((v) => !v)}
+              className="rounded-full border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground)] lg:hidden"
+            >
+              Chats
+            </button>
+            <div>
+              <h1 className="font-display text-xl font-semibold tracking-tight text-[var(--foreground)] sm:text-2xl">
+                Assistant Moboko
+              </h1>
+              <p className="mt-0.5 text-xs font-medium text-[var(--accent)]">{activeTitle}</p>
+            </div>
+          </div>
           <p className="mt-1 text-xs leading-relaxed text-[var(--muted)]">
             Réponses orientées sources. Le texte généré reste bref; les références sermons sont prioritaires.
           </p>

@@ -22,6 +22,26 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+function generateConversationTitle(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  const lower = normalized
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  if (lower.includes("une seule chair")) return "Une seule chair dans le mariage";
+  if (lower.includes("mariage") && (lower.includes("predicateur") || lower.includes("ministre") || lower.includes("pasteur"))) {
+    return "Mariage d'un predicateur";
+  }
+  if (lower.includes("sept tonnerres") || lower.includes("sept tonnerre")) return "Sept Tonnerres";
+  if (lower.includes("apocalypse 10") && lower.includes("breche")) return "Apocalypse 10 dans La Breche";
+  const words = normalized
+    .replace(/[?!.:;]+$/g, "")
+    .split(" ")
+    .filter((w) => w.length > 1)
+    .slice(0, 7);
+  return words.join(" ").slice(0, 64) || "Nouvelle discussion";
+}
+
 type Body = {
   conversationId: string;
   mode: "text" | "image" | "audio" | "concordance_page";
@@ -29,6 +49,8 @@ type Body = {
   query?: string;
   offset?: number;
   pageSize?: number;
+  listId?: string;
+  assistantMessageId?: string;
   imageStoragePath?: string;
   imageMime?: string;
   audioStoragePath?: string;
@@ -60,6 +82,8 @@ function parseBody(raw: unknown): Body | null {
     mode,
     text: typeof o.text === "string" ? o.text : undefined,
     query: typeof o.query === "string" ? o.query : undefined,
+    listId: typeof o.listId === "string" ? o.listId : undefined,
+    assistantMessageId: typeof o.assistantMessageId === "string" ? o.assistantMessageId : undefined,
     offset,
     pageSize,
     imageStoragePath:
@@ -116,7 +140,7 @@ export async function POST(request: Request) {
 
   const { data: conv, error: convErr } = await admin
     .from("conversations")
-    .select("id, user_id")
+    .select("id, user_id, title")
     .eq("id", body.conversationId)
     .maybeSingle();
 
@@ -140,7 +164,31 @@ export async function POST(request: Request) {
       .limit(30);
     let lastScope: unknown = null;
     let lastQuery: string | null = null;
+    if (body.assistantMessageId) {
+      const { data: messageRow } = await admin
+        .from("messages")
+        .select("metadata")
+        .eq("id", body.assistantMessageId)
+        .eq("conversation_id", body.conversationId)
+        .eq("role", "assistant")
+        .maybeSingle();
+      const meta =
+        messageRow?.metadata && typeof messageRow.metadata === "object" && !Array.isArray(messageRow.metadata)
+          ? (messageRow.metadata as Record<string, unknown>)
+          : null;
+      const retrieval =
+        meta?.moboko_retrieval && typeof meta.moboko_retrieval === "object" && !Array.isArray(meta.moboko_retrieval)
+          ? (meta.moboko_retrieval as Record<string, unknown>)
+          : null;
+      const listMatches =
+        !body.listId || String(retrieval?.list_id ?? meta?.moboko_list_id ?? "") === body.listId;
+      if (retrieval && listMatches) {
+        lastQuery = typeof retrieval.query === "string" ? retrieval.query.trim() : null;
+        lastScope = retrieval.scope;
+      }
+    }
     for (const r of recent ?? []) {
+      if (lastQuery) break;
       const row = r as { role?: string; metadata?: unknown };
       if (row.role !== "assistant") continue;
       const meta =
@@ -396,6 +444,7 @@ export async function POST(request: Request) {
       sermon_context_count: 0,
     };
     let mobokoDebugChatOpenAi: Record<string, unknown> | undefined;
+    let activeListId: string | null = null;
 
     if (body.mode === "text" && userContent) {
       const debugEnabled = process.env.MOBOKO_CHAT_OPENAI_DEBUG === "1";
@@ -414,12 +463,45 @@ export async function POST(request: Request) {
         });
         sermonContextCount = agent.hits.length;
         assistantText = agent.text;
+        activeListId = agent.hits.length > 0 ? crypto.randomUUID() : null;
+        const stateWithList =
+          activeListId && agent.hits.length > 0
+            ? {
+                ...agent.assistantState,
+                current_list_id: activeListId,
+                page_size: agent.pageSize,
+                updated_at: new Date().toISOString(),
+                result_lists: {
+                  ...(((agent.assistantState as Record<string, unknown>).result_lists &&
+                  typeof (agent.assistantState as Record<string, unknown>).result_lists === "object" &&
+                  !Array.isArray((agent.assistantState as Record<string, unknown>).result_lists))
+                    ? ((agent.assistantState as Record<string, unknown>).result_lists as Record<string, unknown>)
+                    : {}),
+                  [activeListId]: {
+                    list_id: activeListId,
+                    query: userContent,
+                    scope: agent.scope,
+                    relevant_count: agent.totalCount,
+                    loaded_count: agent.hits.length,
+                    next_offset: agent.nextOffset,
+                    page_size: agent.pageSize,
+                    references: agent.hits.map((h) => ({
+                      slug: h.slug,
+                      paragraph_number: h.paragraph_number,
+                      title: h.title,
+                      date: h.date,
+                    })),
+                  },
+                },
+              }
+            : { ...agent.assistantState, updated_at: new Date().toISOString() };
         metaAssistant =
           agent.hits.length > 0
             ? {
                 model: getChatModel(),
                 sermon_context_count: sermonContextCount,
                 moboko_kind: "sermon_concordance",
+                moboko_list_id: activeListId,
                 results: agent.hits,
                 total_count: agent.totalCount,
                 offset: 0,
@@ -428,6 +510,7 @@ export async function POST(request: Request) {
                 next_offset: agent.nextOffset,
                 ...(agent.relatedAxes.length > 0 ? { moboko_suggestions: agent.relatedAxes } : {}),
                 moboko_retrieval: {
+                  list_id: activeListId,
                   query: userContent,
                   scope: agent.scope,
                   offset: 0,
@@ -436,7 +519,7 @@ export async function POST(request: Request) {
                   has_more: agent.hasMore,
                   next_offset: agent.nextOffset,
                 },
-                moboko_assistant_state: agent.assistantState,
+                moboko_assistant_state: stateWithList,
                 moboko_openai_diagnostics: agent.diagnostics,
                 ...(agent.noCredit ? { moboko_no_credit: true } : {}),
                 moboko_tool: "responses_api_tool_loop_rehydrated",
@@ -454,11 +537,11 @@ export async function POST(request: Request) {
                   has_more: false,
                   next_offset: null,
                 },
-                moboko_assistant_state: agent.assistantState,
+                moboko_assistant_state: stateWithList,
                 moboko_openai_diagnostics: agent.diagnostics,
                 ...(agent.noCredit ? { moboko_no_credit: true } : {}),
               };
-        assistantState = agent.assistantState as Record<string, unknown>;
+        assistantState = stateWithList as Record<string, unknown>;
         console.log("[moboko-openai] conversation_linked=" + agent.diagnostics.conversation_linked);
         console.log("[moboko-openai] previous_response_linked=" + agent.diagnostics.previous_response_linked);
         console.log("[moboko-openai] current_message_received=true");
@@ -543,9 +626,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "insertion_message_assistant" }, { status: 500 });
     }
 
+    const currentTitle = typeof conv.title === "string" ? conv.title.trim() : "";
+    const shouldGenerateTitle =
+      body.mode === "text" &&
+      Boolean(userContent?.trim()) &&
+      (!currentTitle || currentTitle === "Assistant Moboko" || currentTitle === "Nouvelle discussion");
     await admin
       .from("conversations")
-      .update({ updated_at: new Date().toISOString(), assistant_state: assistantState })
+      .update({
+        updated_at: new Date().toISOString(),
+        assistant_state: assistantState,
+        ...(shouldGenerateTitle && userContent ? { title: generateConversationTitle(userContent) } : {}),
+      })
       .eq("id", body.conversationId);
 
     let balanceAfter = balance;

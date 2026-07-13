@@ -668,7 +668,7 @@ async function deterministicLocalNavigation(opts: {
       nextOffset: null,
     });
     if (hits.length === 0) return null;
-    const nextState = { ...opts.state, active_result_refs: hits.map((h) => ({ slug: h.slug, paragraph_number: h.paragraph_number, title: h.title, date: h.date })), active_result_index: 0 };
+    const nextState = { ...opts.state, active_result_index: idx, active_sermon_slug: hits[0]?.slug ?? opts.state.active_sermon_slug ?? null };
     return {
       text: "",
       hits,
@@ -686,6 +686,32 @@ async function deterministicLocalNavigation(opts: {
 
   const wantsNext = /\b(suivant|apres|prochain)\b/.test(intent);
   const wantsPrev = /\b(precedent|avant)\b/.test(intent);
+  const wantsBackToList = /\b(reviens|retour|retourne)\b/.test(intent) && /\b(liste|resultats?)\b/.test(intent);
+  if (wantsBackToList && refs.length > 0) {
+    const hits = await rehydrateSelectedRefs(opts.admin, refs, {
+      query: opts.state.last_query ?? opts.userMessage,
+      conversationId: opts.conversationId,
+      totalCount: opts.state.last_total_count ?? refs.length,
+      pageSize: Math.max(1, refs.length),
+      hasMore: opts.state.next_offset != null,
+      nextOffset: opts.state.next_offset ?? null,
+    });
+    if (hits.length === 0) return null;
+    return {
+      text: "",
+      hits,
+      totalCount: opts.state.last_total_count ?? hits.length,
+      hasMore: opts.state.next_offset != null,
+      nextOffset: opts.state.next_offset ?? null,
+      pageSize: Math.max(1, hits.length),
+      scope,
+      relatedAxes: opts.state.related_axes ?? [],
+      assistantState: opts.state,
+      noCredit: true,
+      diagnostics: { ...baseDiagnostics, tool_names: ["open_previous_result"], final_selection_count: hits.length, rehydrated_count: hits.length },
+    };
+  }
+
   if ((wantsNext || wantsPrev) && refs[currentIndex]) {
     const ref = refs[currentIndex]!;
     const neighbors = await fetchNeighborParagraphs(opts.admin, ref.slug, ref.paragraph_number);
@@ -701,7 +727,7 @@ async function deterministicLocalNavigation(opts: {
       nextOffset: null,
     });
     if (hits.length === 0) return null;
-    const nextState = { ...opts.state, active_result_refs: hits.map((h) => ({ slug: h.slug, paragraph_number: h.paragraph_number, title: h.title, date: h.date })), active_result_index: 0 };
+    const nextState = { ...opts.state, active_result_index: currentIndex, active_sermon_slug: ref.slug };
     return {
       text: "",
       hits,
