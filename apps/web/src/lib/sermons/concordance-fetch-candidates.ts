@@ -70,6 +70,20 @@ const MARRIAGE_FAMILY_ALIASES = [
   "maison",
 ];
 
+const STRICT_MARRIAGE_MINISTRY_ALIASES = [
+  "mariage",
+  "marie",
+  "marier",
+  "epouse",
+  "epoux",
+  "mari",
+  "foyer",
+  "famil",
+  "qualification",
+  "conduite",
+  "maison",
+];
+
 const ONE_FLESH_INTENT_ALIASES = [
   "une seule chair",
   "seule chair",
@@ -241,7 +255,7 @@ function applyStrictSemanticFilter(
   if (!shouldUseStrictMinistryFilter(query, semantic)) return candidates;
   const strict = candidates.filter((candidate) => {
     const text = normalizedText(`${candidate.title ?? ""} ${candidate.paragraph_text ?? ""}`);
-    return hasAnyAlias(text, MINISTRY_ALIASES) && hasAnyAlias(text, MARRIAGE_FAMILY_ALIASES);
+    return hasAnyAlias(text, MINISTRY_ALIASES) && hasAnyAlias(text, STRICT_MARRIAGE_MINISTRY_ALIASES);
   });
   return strict;
 }
