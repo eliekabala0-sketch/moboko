@@ -77,11 +77,7 @@ const STRICT_MARRIAGE_MINISTRY_ALIASES = [
   "epouse",
   "epoux",
   "mari",
-  "foyer",
-  "famil",
   "qualification",
-  "conduite",
-  "maison",
 ];
 
 const ONE_FLESH_INTENT_ALIASES = [
