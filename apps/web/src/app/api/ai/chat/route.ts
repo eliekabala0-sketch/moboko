@@ -6,19 +6,10 @@ import {
   transcribeAudio,
   type DbMessageRow,
 } from "@/lib/ai/moboko-chat";
-import type { ConcordanceHit } from "@/lib/sermons/concordance-types";
 import { getUserFromApiRequest } from "@/lib/supabase/api-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
 import { tool_continue_last_scope } from "@/lib/chat/sermon-retrieval-tools";
-import { fetchSingleParagraphCandidate } from "@/lib/sermons/retrieval-direct";
-import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
-import { sortSermonOccurrencesOldestFirst } from "@/lib/sermons/source-order";
-import { runRetrievalAgent } from "@/lib/sermons/retrieval-agent";
-import {
-  fetchConcordanceSemanticCandidates,
-  shouldKeepStrictSemanticEmpty,
-} from "@/lib/sermons/concordance-fetch-candidates";
-import { fetchSermonSearchCandidates, type SermonParagraphCandidate } from "@/lib/sermons/ai-sermon-search-server";
+import { runOpenAiSermonAgent } from "@/lib/chat/openai-sermon-agent";
 import { ensureMonthlySubscriptionCredits } from "@/lib/billing/subscription-credits";
 import {
   ALL_PUBLIC_APP_SETTING_KEYS,
@@ -87,57 +78,6 @@ function pathBelongsToUser(path: string, userId: string) {
 }
 
 const EMPTY_CONCORDANCE_MESSAGE = "Aucun passage suffisamment précis n'a été trouvé pour cette formulation.";
-
-async function rehydrateChatConcordanceHits(
-  admin: NonNullable<ReturnType<typeof createSupabaseServiceClient>>,
-  hits: ConcordanceHit[],
-  meta: {
-    query: string;
-    conversationId: string;
-    offset: number;
-    pageSize: number;
-    totalCount: number;
-    hasMore: boolean;
-    nextOffset: number | null;
-  },
-): Promise<ConcordanceHit[]> {
-  const exact = [];
-  const seen = new Set<string>();
-  for (const h of hits) {
-    const key = `${h.slug}:${h.paragraph_number}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const c = await fetchSingleParagraphCandidate(admin, h.slug, h.paragraph_number);
-    if (c) exact.push(c);
-  }
-
-  const ordered = sortSermonOccurrencesOldestFirst(exact);
-  const out: ConcordanceHit[] = [];
-  for (const c of ordered) {
-    const n = await fetchNeighborParagraphs(admin, c.slug, c.paragraph_number);
-    out.push({
-      slug: c.slug,
-      title: c.title,
-      location: c.location ?? null,
-      date: c.preached_on ?? (c.year != null ? String(c.year) : null),
-      paragraph_number: c.paragraph_number,
-      paragraph_text: c.paragraph_text,
-      prev_paragraph_number: n.prev_paragraph_number,
-      prev_paragraph_text: n.prev_paragraph_text,
-      next_paragraph_number: n.next_paragraph_number,
-      next_paragraph_text: n.next_paragraph_text,
-      _source: "chat",
-      _query: meta.query,
-      _conversation_id: meta.conversationId,
-      _offset: meta.offset,
-      _page_size: meta.pageSize,
-      _total_count: Math.max(meta.totalCount, ordered.length),
-      _has_more: meta.hasMore,
-      _next_offset: meta.nextOffset,
-    });
-  }
-  return out;
-}
 
 export async function POST(request: Request) {
   const openai = getOpenAIClient();
@@ -330,6 +270,22 @@ export async function POST(request: Request) {
 
   const history = (historyRows ?? []) as DbMessageRow[];
   const openaiMessages = historyToOpenAIMessages(history);
+  let assistantState: Record<string, unknown> = {};
+  const { data: stateRow } = await admin
+    .from("conversations")
+    .select("assistant_state")
+    .eq("id", body.conversationId)
+    .maybeSingle();
+  if (
+    stateRow &&
+    typeof stateRow === "object" &&
+    "assistant_state" in stateRow &&
+    stateRow.assistant_state &&
+    typeof stateRow.assistant_state === "object" &&
+    !Array.isArray(stateRow.assistant_state)
+  ) {
+    assistantState = stateRow.assistant_state as Record<string, unknown>;
+  }
 
   let userContent: string | null = null;
   const userKind: "text" | "image" | "audio" = body.mode;
@@ -423,151 +379,84 @@ export async function POST(request: Request) {
     let mobokoDebugChatOpenAi: Record<string, unknown> | undefined;
 
     if (body.mode === "text" && userContent) {
-      console.log("[chat-openai] request_start");
-
-      if (!openai) {
-        console.log("[chat-openai] missing_api_key");
-        return NextResponse.json(
-          { error: "openai_non_configure", detail: "OPENAI_API_KEY manquante cote serveur." },
-          { status: 503 },
-        );
-      }
-
-      let emptyFallbackUsed = false;
-      let parsedResultsCount = 0;
-      let candidateCount = 0;
-      let openaiStatus = "not_called";
-      let outputPreview = "";
-      let usedFallbackSearch = false;
-
-      const setEmptyMeta = () => {
-        emptyFallbackUsed = true;
-        assistantText = EMPTY_CONCORDANCE_MESSAGE;
-        metaAssistant = {
-          model: getChatModel(),
-          sermon_context_count: 0,
-          moboko_kind: "sermon_concordance_empty",
-          moboko_retrieval: {
-            query: userContent,
-            scope: { kind: "library" },
-            offset: 0,
-            page_size: CONCORDANCE_PAGE_SIZE,
-            total_count: 0,
-            has_more: false,
-            next_offset: null,
-          },
-        };
-      };
-
+      const debugEnabled = process.env.MOBOKO_CHAT_OPENAI_DEBUG === "1";
+      console.log("[moboko-openai] request_start");
+      console.log("[moboko-openai] api_key_present=true");
+      console.log("[moboko-openai] model=" + getChatModel());
       try {
-        const semantic = await runRetrievalAgent(openai, userContent, null);
-        openaiStatus = semantic ? "ok" : "empty";
-        outputPreview = semantic
-          ? JSON.stringify({
-              intent: semantic.intent,
-              topic: semantic.topic,
-              retrieval_phrases: semantic.retrieval_phrases,
-              expansions: semantic.expansions,
-            }).slice(0, 420)
-          : "";
-        console.log("[chat-openai] openai_status", openaiStatus);
-        console.log("[chat-openai] raw_response_preview", outputPreview);
-
-        let candidates: SermonParagraphCandidate[] = [];
-        if (semantic) {
-          candidates = await fetchConcordanceSemanticCandidates(admin, userContent, semantic, "chat");
-        }
-        if (candidates.length === 0 && !shouldKeepStrictSemanticEmpty(userContent, semantic)) {
-          usedFallbackSearch = true;
-          candidates = await fetchSermonSearchCandidates(admin, userContent);
-        }
-        candidateCount = candidates.length;
-        console.log("[chat-openai] supabase_candidate_count", candidateCount);
-
-        if (candidates.length === 0) {
-          setEmptyMeta();
-        } else {
-          const hits: ConcordanceHit[] = candidates.slice(0, CONCORDANCE_PAGE_SIZE).map((c) => ({
-            slug: c.slug,
-            title: c.title,
-            location: c.location,
-            date: c.preached_on ?? (c.year != null ? String(c.year) : null),
-            paragraph_number: c.paragraph_number,
-            paragraph_text: c.paragraph_text,
-            prev_paragraph_number: null,
-            prev_paragraph_text: null,
-            next_paragraph_number: null,
-            next_paragraph_text: null,
-          }));
-          const enriched = await rehydrateChatConcordanceHits(admin, hits, {
-            query: userContent,
-            conversationId: body.conversationId,
-            offset: 0,
-            pageSize: CONCORDANCE_PAGE_SIZE,
-            totalCount: candidates.length,
-            hasMore: candidates.length > CONCORDANCE_PAGE_SIZE,
-            nextOffset: candidates.length > CONCORDANCE_PAGE_SIZE ? CONCORDANCE_PAGE_SIZE : null,
-          });
-          parsedResultsCount = enriched.length;
-          if (enriched.length === 0) {
-            setEmptyMeta();
-          } else {
-            sermonContextCount = enriched.length;
-            assistantText = "";
-            emptyFallbackUsed = false;
-            const scope =
-              semantic?.restrict_sermon_slug
-                ? { kind: "sermon" as const, sermon_slug: semantic.restrict_sermon_slug }
-                : enriched.length > 0 && enriched.every((h) => h.slug === enriched[0]!.slug)
-                  ? { kind: "sermon" as const, sermon_slug: enriched[0]!.slug }
-                  : { kind: "library" as const };
-            const suggestions = (semantic?.expansions ?? []).slice(0, 2);
-            metaAssistant = {
-              model: getChatModel(),
-              sermon_context_count: sermonContextCount,
-              moboko_kind: "sermon_concordance",
-              results: enriched,
-              total_count: Math.max(candidates.length, enriched.length),
-              offset: 0,
-              page_size: CONCORDANCE_PAGE_SIZE,
-              has_more: candidates.length > CONCORDANCE_PAGE_SIZE,
-              next_offset: candidates.length > CONCORDANCE_PAGE_SIZE ? CONCORDANCE_PAGE_SIZE : null,
-              ...(suggestions.length > 0 ? { moboko_suggestions: suggestions } : {}),
-              moboko_retrieval: {
-                query: userContent,
-                scope,
+        const agent = await runOpenAiSermonAgent({
+          openai,
+          admin,
+          conversationId: body.conversationId,
+          userMessage: userContent,
+          history: history.map((h) => ({ role: h.role, kind: h.kind, content: h.content })),
+          state: assistantState,
+          debug: debugEnabled,
+        });
+        sermonContextCount = agent.hits.length;
+        assistantText = agent.text;
+        metaAssistant =
+          agent.hits.length > 0
+            ? {
+                model: getChatModel(),
+                sermon_context_count: sermonContextCount,
+                moboko_kind: "sermon_concordance",
+                results: agent.hits,
+                total_count: agent.totalCount,
                 offset: 0,
-                page_size: CONCORDANCE_PAGE_SIZE,
-                total_count: Math.max(candidates.length, enriched.length),
-                has_more: candidates.length > CONCORDANCE_PAGE_SIZE,
-                next_offset: candidates.length > CONCORDANCE_PAGE_SIZE ? CONCORDANCE_PAGE_SIZE : null,
-                semantic,
-              },
-              moboko_tool: "openai_semantic_retrieval_rehydrated",
-            };
-          }
+                page_size: agent.pageSize,
+                has_more: agent.hasMore,
+                next_offset: agent.nextOffset,
+                ...(agent.relatedAxes.length > 0 ? { moboko_suggestions: agent.relatedAxes } : {}),
+                moboko_retrieval: {
+                  query: userContent,
+                  scope: agent.scope,
+                  offset: 0,
+                  page_size: agent.pageSize,
+                  total_count: agent.totalCount,
+                  has_more: agent.hasMore,
+                  next_offset: agent.nextOffset,
+                },
+                moboko_assistant_state: agent.assistantState,
+                moboko_openai_diagnostics: agent.diagnostics,
+                moboko_tool: "responses_api_tool_loop_rehydrated",
+              }
+            : {
+                model: getChatModel(),
+                sermon_context_count: 0,
+                moboko_kind: "sermon_concordance_empty",
+                moboko_retrieval: {
+                  query: userContent,
+                  scope: agent.scope,
+                  offset: 0,
+                  page_size: agent.pageSize,
+                  total_count: 0,
+                  has_more: false,
+                  next_offset: null,
+                },
+                moboko_assistant_state: agent.assistantState,
+                moboko_openai_diagnostics: agent.diagnostics,
+              };
+        assistantState = agent.assistantState as Record<string, unknown>;
+        console.log("[moboko-openai] conversation_linked=" + agent.diagnostics.conversation_linked);
+        console.log("[moboko-openai] previous_response_linked=" + agent.diagnostics.previous_response_linked);
+        console.log("[moboko-openai] current_message_received=true");
+        console.log("[moboko-openai] history_items_count=" + agent.diagnostics.history_items_count);
+        console.log("[moboko-openai] tool_calls_count=" + agent.diagnostics.tool_calls_count);
+        console.log("[moboko-openai] tool_names=" + agent.diagnostics.tool_names.join(","));
+        console.log("[moboko-openai] tool_outputs_returned=" + agent.diagnostics.tool_outputs_returned);
+        console.log("[moboko-openai] final_selection_count=" + agent.diagnostics.final_selection_count);
+        console.log("[moboko-openai] rehydrated_count=" + agent.diagnostics.rehydrated_count);
+        console.log("[moboko-openai] failure_reason=" + agent.diagnostics.failure_reason);
+        if (debugEnabled) {
+          mobokoDebugChatOpenAi = agent.diagnostics as unknown as Record<string, unknown>;
         }
       } catch (e) {
-        console.error("[chat-openai] openai_error_response", e instanceof Error ? e.message : String(e));
-        setEmptyMeta();
-      }
-
-      console.log("[chat-openai] parsed_results_count", parsedResultsCount);
-      console.log("[chat-openai] rehydrated_results_count", parsedResultsCount);
-      console.log("[chat-openai] empty_fallback_used =", emptyFallbackUsed);
-
-      if (process.env.MOBOKO_CHAT_OPENAI_DEBUG === "1") {
-        mobokoDebugChatOpenAi = {
-          openai_called: true,
-          openai_status: openaiStatus,
-          raw_response_received: openaiStatus === "ok",
-          supabase_candidate_count: candidateCount,
-          parsed_results_count: parsedResultsCount,
-          rehydrated_results_count: parsedResultsCount,
-          empty_fallback_used: emptyFallbackUsed,
-          fallback_search_used: usedFallbackSearch,
-          output_preview: outputPreview,
-        };
+        console.error("[moboko-openai] failure_reason=assistant_unavailable", e instanceof Error ? e.message : String(e));
+        return NextResponse.json(
+          { error: "assistant_indisponible", detail: "La conversation OpenAI n'a pas pu aboutir." },
+          { status: 503 },
+        );
       }
     } else {
       assistantText = await runChatCompletion(openai, completionMessages);
@@ -635,7 +524,7 @@ export async function POST(request: Request) {
 
     await admin
       .from("conversations")
-      .update({ updated_at: new Date().toISOString() })
+      .update({ updated_at: new Date().toISOString(), assistant_state: assistantState })
       .eq("id", body.conversationId);
 
     let balanceAfter = balance;
