@@ -185,10 +185,18 @@ export default async function ProjectionPage({ searchParams }: Props) {
       .limit(18);
     const selectedHymnBook = clean(sp.book);
     if (selectedHymnBook) hymnQuery = hymnQuery.eq("book_id", selectedHymnBook);
-    if (q)
+    if (q) {
+      const qSafe = q.replace(/[%_,]/g, "");
+      const bestTerm =
+        qSafe
+          .split(/\s+/)
+          .map((term) => term.trim())
+          .filter((term) => term.length >= 3)
+          .sort((a, b) => b.length - a.length)[0] ?? qSafe;
       hymnQuery = hymnQuery.or(
-        `title.ilike.%${q.replace(/[%_,]/g, "")}%,number.ilike.%${q.replace(/[%_,]/g, "")}%,lyrics.ilike.%${q.replace(/[%_,]/g, "")}%`,
+        `title.ilike.%${qSafe}%,number.ilike.%${qSafe}%,lyrics.ilike.%${qSafe}%,title.ilike.%${bestTerm}%,lyrics.ilike.%${bestTerm}%`,
       );
+    }
     const { data: hymnData } = await hymnQuery.order("number", { ascending: true });
     hymns = (hymnData ?? []) as typeof hymns;
 

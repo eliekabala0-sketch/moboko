@@ -22,6 +22,69 @@ set full_text = coalesce(full_text, lyrics),
     search_text = coalesce(search_text, title || ' ' || coalesce(number, '') || ' ' || lyrics)
 where full_text is null or search_text is null;
 
+-- Clean duplicate hymn numbers before enforcing uniqueness.
+-- 1. Strictly identical duplicate rows are removed, preserving one copy.
+-- 2. Different texts sharing the same logical number are preserved, marked for review,
+--    and only the secondary conflicting numbers are suffixed so UNIQUE(book_id, number)
+--    can be enforced without losing source text.
+with duplicate_signatures as (
+  select
+    id,
+    row_number() over (
+      partition by
+        book_id,
+        number,
+        md5(
+          coalesce(title, '') || chr(31) ||
+          coalesce(lyrics, '') || chr(31) ||
+          coalesce(chorus, '') || chr(31) ||
+          coalesce(full_text, '')
+        )
+      order by created_at, id
+    ) as same_text_rank
+  from public.hymns
+  where book_id is not null
+    and number is not null
+)
+delete from public.hymns h
+using duplicate_signatures d
+where h.id = d.id
+  and d.same_text_rank > 1;
+
+with numbered_conflicts as (
+  select
+    id,
+    number as original_number,
+    row_number() over (partition by book_id, number order by created_at, id) as conflict_rank,
+    count(*) over (partition by book_id, number) as conflict_count
+  from public.hymns
+  where book_id is not null
+    and number is not null
+),
+conflicting_rows as (
+  select *
+  from numbered_conflicts
+  where conflict_count > 1
+)
+update public.hymns h
+set
+  number = case
+    when c.conflict_rank = 1 then h.number
+    else c.original_number || '-conflit-' || c.conflict_rank::text
+  end,
+  validation_status = 'needs_review',
+  validation_notes = coalesce(h.validation_notes, '[]'::jsonb) || jsonb_build_array(
+    jsonb_build_object(
+      'type', 'duplicate_number_conflict',
+      'original_number', c.original_number,
+      'conflict_rank', c.conflict_rank,
+      'conflict_count', c.conflict_count,
+      'note', 'Different hymns shared the same book number; text preserved and conflict requires review.'
+    )
+  )
+from conflicting_rows c
+where h.id = c.id;
+
 create unique index if not exists hymns_book_number_unique
   on public.hymns (book_id, number)
   where book_id is not null and number is not null;
