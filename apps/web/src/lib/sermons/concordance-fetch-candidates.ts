@@ -91,7 +91,6 @@ const ONE_FLESH_INTENT_ALIASES = [
 
 const ONE_FLESH_TEXT_ALIASES = [
   "une seule chair",
-  "une chair",
   "seule chair",
   "deux deviennent un",
   "deux deviendront un",
@@ -173,6 +172,8 @@ function semanticHaystack(query: string, semantic: SemanticIntent | null) {
 }
 
 function shouldUseOneFleshFilter(query: string, semantic: SemanticIntent | null) {
+  const queryOnly = normalizedText(query);
+  if (!hasAnyAlias(queryOnly, ONE_FLESH_INTENT_ALIASES)) return false;
   return hasAnyAlias(semanticHaystack(query, semantic), ONE_FLESH_INTENT_ALIASES);
 }
 
