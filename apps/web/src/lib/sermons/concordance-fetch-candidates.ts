@@ -292,8 +292,19 @@ export async function fetchConcordanceSemanticCandidates(
     semantic?.search_mode === "sermon_title_then_topic_search" && semantic?.sermon_hint
       ? [`${semantic.sermon_hint} ${semantic.topic || query}`]
       : [];
+  const oneFleshRecall = shouldUseOneFleshFilter(query, semantic)
+    ? [
+        "une seule chair",
+        "homme femme une seule chair",
+        "mari femme une seule chair",
+        "ne sont plus deux ils sont un",
+        "chair de ma chair os de mes os",
+        "deux deviennent un mariage",
+      ]
+    : [];
 
   const candidatesRaw = dedupeQueries([
+    ...oneFleshRecall,
     ...(semantic?.retrieval_phrases ?? []),
     semantic?.intent ?? "",
     semantic?.topic ?? "",
