@@ -1,4 +1,10 @@
-import { createHymnAction, deleteHymnAction, importHymnBookAction, updateHymnAction } from "@/app/admin/hymns/actions";
+import {
+  createHymnAction,
+  deleteHymnAction,
+  importHymnBookAction,
+  updateHymnAction,
+  updateHymnBookStatusAction,
+} from "@/app/admin/hymns/actions";
 import { requireAdmin } from "@/lib/admin/require-admin";
 
 export const metadata = {
@@ -7,14 +13,29 @@ export const metadata = {
 
 export default async function AdminHymnsPage() {
   const { supabase } = await requireAdmin();
-  const { data: hymns } = await supabase
-    .from("hymns")
-    .select("id, title, slug, number, category, lyrics, is_published, book_id, hymn_books ( name )")
-    .order("number", { ascending: true });
-  const { data: books } = await supabase
-    .from("hymn_books")
-    .select("id, name, slug, is_published")
-    .order("name", { ascending: true });
+  const [{ data: hymns, error: hymnsError }, { data: books, error: booksError }, { data: statRows }] =
+    await Promise.all([
+      supabase
+        .from("hymns")
+        .select("id, title, slug, number, category, lyrics, is_published, book_id, hymn_books ( name )")
+        .order("book_id", { ascending: true })
+        .order("number", { ascending: true })
+        .limit(120),
+      supabase
+        .from("hymn_books")
+        .select("id, name, slug, is_published, description")
+        .order("name", { ascending: true }),
+      supabase.from("hymns").select("book_id, is_published").limit(2000),
+    ]);
+  const bookCounts = new Map<string, { total: number; published: number }>();
+  for (const row of statRows ?? []) {
+    const key = String(row.book_id ?? "");
+    const current = bookCounts.get(key) ?? { total: 0, published: 0 };
+    current.total += 1;
+    if (row.is_published) current.published += 1;
+    bookCounts.set(key, current);
+  }
+  const loadError = hymnsError?.message ?? booksError?.message ?? null;
 
   return (
     <main>
@@ -24,6 +45,39 @@ export default async function AdminHymnsPage() {
       <h1 className="font-display mt-3 text-3xl font-semibold tracking-tight text-[var(--foreground)]">
         Cantiques
       </h1>
+      {loadError ? (
+        <p className="moboko-card mt-6 border-[var(--warning)]/30 bg-[var(--warning-soft)] p-4 text-sm text-[var(--foreground)]">
+          Une partie des donnees n&apos;a pas pu etre chargee : {loadError}
+        </p>
+      ) : null}
+
+      <section className="mt-8 grid gap-3 md:grid-cols-3">
+        {(books ?? []).map((book) => {
+          const counts = bookCounts.get(String(book.id)) ?? { total: 0, published: 0 };
+          return (
+            <article key={book.id} className="moboko-card p-4">
+              <p className="font-semibold text-[var(--foreground)]">{book.name as string}</p>
+              <p className="mt-1 text-xs text-[var(--muted)]">{book.is_published ? "Publie" : "Brouillon"}</p>
+              <p className="mt-3 text-sm text-[var(--muted)]">
+                {counts.total} chants · {counts.published} publies
+              </p>
+              <form action={updateHymnBookStatusAction} className="mt-4 flex flex-wrap items-center gap-3">
+                <input type="hidden" name="id" value={book.id as string} />
+                <label className="flex items-center gap-2 text-sm text-[var(--foreground)]">
+                  <input name="is_published" type="checkbox" defaultChecked={Boolean(book.is_published)} />
+                  Livre publie
+                </label>
+                <button className="rounded-full border border-[var(--border-strong)] px-4 py-2 text-xs font-semibold text-[var(--foreground)]">
+                  Enregistrer
+                </button>
+              </form>
+            </article>
+          );
+        })}
+        {(books ?? []).length === 0 ? (
+          <p className="moboko-card p-4 text-sm text-[var(--muted)]">Aucun livre importe.</p>
+        ) : null}
+      </section>
 
       <form action={importHymnBookAction} className="moboko-card mt-8 grid gap-4 p-5">
         <h2 className="text-lg font-semibold text-[var(--foreground)]">Importer un livre complet</h2>
@@ -108,6 +162,13 @@ export default async function AdminHymnsPage() {
       </form>
 
       <section className="mt-10 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-[var(--foreground)]">Chants importes</h2>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Affichage limite aux 120 premiers chants pour garder la page admin stable. Les chants restent disponibles en
+            lecture et projection.
+          </p>
+        </div>
         {(hymns ?? []).map((hymn) => (
           <article key={hymn.id} className="moboko-card p-5">
             <form action={updateHymnAction} className="grid gap-4">

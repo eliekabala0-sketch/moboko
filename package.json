@@ -24,6 +24,7 @@
   },
   "devDependencies": {
     "@supabase/supabase-js": "^2.86.0",
-    "openai": "^6.33.0"
+    "openai": "^6.33.0",
+    "pdf-parse": "^2.4.5"
   }
 }

@@ -1,0 +1,290 @@
+{
+  "generated_at": "2026-07-13T18:29:06.921Z",
+  "files": [
+    {
+      "file": "Cantique Pene Na Yo (1).pdf",
+      "bytes": 116209,
+      "pages": 48,
+      "text_length": 77822,
+      "text_extractible": true,
+      "scanned_likely": false,
+      "extraction_quality": "good",
+      "type": "hymn_book",
+      "language": "ln",
+      "detected_items": 150,
+      "validation": {
+        "total_hymns": 150,
+        "max_number": 151,
+        "missing_numbers": [
+          24
+        ],
+        "duplicate_numbers": [],
+        "anomalies": [
+          {
+            "number": 137,
+            "title": "NGOMBA NA SIONA",
+            "notes": [
+              "chorus_marker_unparsed"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "file": "Cantiques Crois seulement.pdf",
+      "bytes": 265881,
+      "pages": 80,
+      "text_length": 194373,
+      "text_extractible": true,
+      "scanned_likely": false,
+      "extraction_quality": "good",
+      "type": "hymn_book",
+      "language": "fr",
+      "detected_items": 223,
+      "validation": {
+        "total_hymns": 223,
+        "max_number": 226,
+        "missing_numbers": [
+          132,
+          143,
+          162
+        ],
+        "duplicate_numbers": [],
+        "anomalies": []
+      }
+    },
+    {
+      "file": "Cantiques Hosana.pdf",
+      "bytes": 260808,
+      "pages": 80,
+      "text_length": 172897,
+      "text_extractible": true,
+      "scanned_likely": false,
+      "extraction_quality": "good",
+      "type": "hymn_book",
+      "language": "fr",
+      "detected_items": 246,
+      "validation": {
+        "total_hymns": 246,
+        "max_number": 248,
+        "missing_numbers": [
+          135,
+          235,
+          243,
+          245
+        ],
+        "duplicate_numbers": [
+          136,
+          246
+        ],
+        "anomalies": [
+          {
+            "number": 11,
+            "title": "ETRE A TES PIEDS, COMME MARIE",
+            "notes": [
+              "chorus_marker_unparsed"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "file": "LA BIBLE ANCIEN TESTAMENT BIBLIO 1910 (2 992 Pages - 7,1 Mo).pdf",
+      "bytes": 7059733,
+      "pages": 2992,
+      "text_length": 4422225,
+      "text_extractible": true,
+      "scanned_likely": false,
+      "extraction_quality": "good",
+      "type": "bible",
+      "language": "fr",
+      "detected_items": 29627,
+      "validation": {
+        "total_books": 66,
+        "total_chapters": 1107,
+        "total_verses": 29627,
+        "duplicate_refs": [],
+        "anomalies": [
+          {
+            "type": "missing_chapters",
+            "book": "Genèse",
+            "chapters": [
+              28
+            ]
+          },
+          {
+            "type": "missing_chapters",
+            "book": "Exode",
+            "chapters": [
+              8
+            ]
+          },
+          {
+            "type": "missing_chapters",
+            "book": "Lévitique",
+            "chapters": [
+              6
+            ]
+          },
+          {
+            "type": "missing_chapters",
+            "book": "Nombres",
+            "chapters": [
+              30
+            ]
+          },
+          {
+            "type": "missing_chapters",
+            "book": "1 Samuel",
+            "chapters": [
+              24
+            ]
+          },
+          {
+            "type": "missing_chapters",
+            "book": "2 Chroniques",
+            "chapters": [
+              14
+            ]
+          },
+          {
+            "type": "missing_chapters",
+            "book": "Job",
+            "chapters": [
+              39,
+              40,
+              41
+            ]
+          },
+          {
+            "type": "missing_chapters",
+            "book": "Psaumes",
+            "chapters": [
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              12,
+              18,
+              19,
+              20,
+              21,
+              22,
+              30,
+              31,
+              34,
+              36,
+              38,
+              39,
+              40,
+              41,
+              42,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64,
+              65,
+              67,
+              68,
+              69,
+              70,
+              75,
+              76,
+              77,
+              80,
+              81,
+              83,
+              84,
+              85,
+              88,
+              89,
+              92,
+              102,
+              108,
+              140,
+              142
+            ]
+          },
+          {
+            "type": "missing_chapters",
+            "book": "Ecclésiaste",
+            "chapters": [
+              5,
+              12
+            ]
+          },
+          {
+            "type": "missing_chapters",
+            "book": "Cantique",
+            "chapters": [
+              7
+            ]
+          },
+          {
+            "type": "missing_chapters",
+            "book": "Esaïe",
+            "chapters": [
+              9,
+              64
+            ]
+          },
+          {
+            "type": "missing_chapters",
+            "book": "Ezéchiel",
+            "chapters": [
+              21
+            ]
+          },
+          {
+            "type": "missing_chapters",
+            "book": "Osée",
+            "chapters": [
+              2,
+              12
+            ]
+          },
+          {
+            "type": "missing_chapters",
+            "book": "Jonas",
+            "chapters": [
+              2
+            ]
+          },
+          {
+            "type": "missing_chapters",
+            "book": "Michée",
+            "chapters": [
+              5
+            ]
+          },
+          {
+            "type": "missing_chapters",
+            "book": "Nahum",
+            "chapters": [
+              2
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

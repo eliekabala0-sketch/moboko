@@ -1,4 +1,4 @@
-import { importBibleAction } from "@/app/admin/bible/actions";
+﻿import { importBibleAction } from "@/app/admin/bible/actions";
 import { requireAdmin } from "@/lib/admin/require-admin";
 
 export const metadata = {
@@ -7,23 +7,31 @@ export const metadata = {
 
 export default async function AdminBiblePage() {
   const { supabase } = await requireAdmin();
-  const { data: rows, count } = await supabase
+  const { data: rows, count, error } = await supabase
     .from("bible_passages")
-    .select("translation, book", { count: "exact" })
+    .select("translation, book, chapter", { count: "exact" })
     .order("translation", { ascending: true })
-    .limit(5000);
-  const versionMap = new Map<string, { translation: string; verses: number; books: Set<string> }>();
+    .limit(40000);
+  const versionMap = new Map<string, { translation: string; verses: number; books: Set<string>; chapters: Set<string> }>();
   for (const row of rows ?? []) {
     const translation = String(row.translation ?? "LSG");
-    const current = versionMap.get(translation) ?? { translation, verses: 0, books: new Set<string>() };
+    const current = versionMap.get(translation) ?? {
+      translation,
+      verses: 0,
+      books: new Set<string>(),
+      chapters: new Set<string>(),
+    };
     current.verses += 1;
     if (row.book) current.books.add(String(row.book));
+    if (row.book && row.chapter) current.chapters.add(`${row.book}.${row.chapter}`);
     versionMap.set(translation, current);
   }
   const versions = Array.from(versionMap.values()).map((version) => ({
     translation: version.translation,
     verses: version.verses,
     books: version.books.size,
+    chapters: version.chapters.size,
+    scope: version.books.size === 66 && version.chapters.size >= 1189 ? "complete" : "partielle",
   }));
 
   return (
@@ -34,6 +42,11 @@ export default async function AdminBiblePage() {
         Importez une version biblique structuree pour la lecture et la projection. Les versets sont remplaces par
         reference identique, sans doublon.
       </p>
+      {error ? (
+        <p className="moboko-card mt-6 border-[var(--warning)]/30 bg-[var(--warning-soft)] p-4 text-sm text-[var(--foreground)]">
+          Une partie des donnees bibliques n&apos;a pas pu etre chargee : {error.message}
+        </p>
+      ) : null}
 
       <form action={importBibleAction} className="moboko-card mt-8 grid gap-4 p-5">
         <h2 className="text-lg font-semibold text-[var(--foreground)]">Importer une version</h2>
@@ -72,7 +85,7 @@ export default async function AdminBiblePage() {
               <div key={version.translation} className="flex items-center justify-between gap-4 px-4 py-3 text-sm">
                 <p className="font-semibold text-[var(--foreground)]">{version.translation}</p>
                 <p className="text-[var(--muted)]">
-                  {version.verses ?? 0} versets · {version.books ?? 0} livres
+                  {version.books ?? 0} livres · {version.chapters ?? 0} chapitres · {version.verses ?? 0} versets ·{" "}{version.scope}
                 </p>
               </div>
             ))
@@ -80,12 +93,14 @@ export default async function AdminBiblePage() {
             <p className="px-4 py-6 text-sm text-[var(--muted)]">Aucune version biblique chargee.</p>
           )}
         </div>
-        {count && count > 5000 ? (
+        {count && count > 40000 ? (
           <p className="mt-2 text-xs text-[var(--muted)]">
-            Apercu limite a 5000 lignes sur {count} versets. La projection lit la table complete.
+            Apercu limite a 40000 lignes sur {count} versets. La projection lit la table complete.
           </p>
         ) : null}
       </section>
     </main>
   );
 }
+
+

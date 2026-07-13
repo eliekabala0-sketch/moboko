@@ -148,6 +148,17 @@ export async function deleteHymnAction(formData: FormData) {
   revalidatePath("/projection");
 }
 
+export async function updateHymnBookStatusAction(formData: FormData) {
+  const { supabase } = await adminSession();
+  const id = String(formData.get("id") ?? "").trim();
+  const isPublished = formData.get("is_published") === "on";
+  if (!id) throw new Error("Livre introuvable");
+  const { error } = await supabase.from("hymn_books").update({ is_published: isPublished }).eq("id", id);
+  if (error) throw new Error(error.message);
+  revalidatePath("/admin/hymns");
+  revalidatePath("/projection");
+}
+
 export async function importHymnBookAction(formData: FormData) {
   const { supabase } = await adminSession();
   const name = String(formData.get("book_name") ?? "").trim();
