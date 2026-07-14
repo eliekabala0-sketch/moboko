@@ -15,6 +15,8 @@ import Link from "next/link";
 
 type Props = {
   userId: string;
+  initialConversationId?: string | null;
+  paymentStatus?: string | null;
 };
 
 type ConversationListItem = {
@@ -23,6 +25,38 @@ type ConversationListItem = {
   created_at: string;
   updated_at: string;
 };
+
+const CREDIT_EXHAUSTED_MESSAGE =
+  "Vous n’avez plus de crédits pour utiliser l’Assistant. Rechargez votre solde pour continuer.";
+
+function creditsHref(conversationId: string | null) {
+  const suffix = conversationId ? `&conversationId=${encodeURIComponent(conversationId)}` : "";
+  return `/billing?tab=credits&from=chat${suffix}#credits`;
+}
+
+function updateChatUrl(conversationId: string | null) {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  if (conversationId) url.searchParams.set("conversationId", conversationId);
+  else url.searchParams.delete("conversationId");
+  url.searchParams.delete("payment");
+  url.searchParams.delete("status");
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+class CreditError extends Error {
+  code: string;
+  balance: number | null;
+  required: number | null;
+
+  constructor(code: string, balance: number | null, required: number | null) {
+    super(CREDIT_EXHAUSTED_MESSAGE);
+    this.name = "CreditError";
+    this.code = code;
+    this.balance = balance;
+    this.required = required;
+  }
+}
 
 async function postAiChat(body: Record<string, unknown>) {
   const res = await fetch("/api/ai/chat", {
@@ -39,11 +73,15 @@ async function postAiChat(body: Record<string, unknown>) {
     required?: number;
   };
   if (!res.ok) {
-    if (res.status === 402) {
-      throw new Error(
-        typeof data.message === "string"
-          ? data.message
-          : `Crédits insuffisants (solde ${data.balance ?? "?"}, requis ${data.required ?? "?"})`,
+    if (
+      res.status === 402 ||
+      data.error === "credits_insuffisants" ||
+      data.error === "credits_epuises"
+    ) {
+      throw new CreditError(
+        typeof data.error === "string" ? data.error : "credits_epuises",
+        typeof data.balance === "number" ? data.balance : null,
+        typeof data.required === "number" ? data.required : null,
       );
     }
     throw new Error(
@@ -106,7 +144,7 @@ function WalletBanner({
   );
 }
 
-export function ChatExperience({ userId }: Props) {
+export function ChatExperience({ userId, initialConversationId, paymentStatus }: Props) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [flags, setFlags] = useState<PublicHomePageSettings>(defaultPublicHomePageSettings);
   const [wallet, setWallet] = useState<{
@@ -120,6 +158,7 @@ export function ChatExperience({ userId }: Props) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [creditError, setCreditError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -129,18 +168,48 @@ export function ChatExperience({ userId }: Props) {
   );
   const activeTitle = activeConversation?.title?.trim() || "Nouvelle discussion";
   const conversationHistory = useMemo(() => {
-    return conversations.map((c) => ({
-      id: c.id,
-      preview: c.title?.trim() || "Nouvelle discussion",
-      at: new Date(c.updated_at).toLocaleString("fr-FR", {
-        day: "2-digit",
-        month: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-      active: c.id === conversationId,
-    }));
+    const now = Date.now();
+    const groups = [
+      { label: "Aujourd'hui", items: [] as Array<{ id: string; preview: string; at: string; active: boolean }> },
+      { label: "7 derniers jours", items: [] as Array<{ id: string; preview: string; at: string; active: boolean }> },
+      { label: "30 derniers jours", items: [] as Array<{ id: string; preview: string; at: string; active: boolean }> },
+      { label: "Plus anciennes", items: [] as Array<{ id: string; preview: string; at: string; active: boolean }> },
+    ];
+    for (const c of conversations) {
+      const date = new Date(c.updated_at);
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const ageMs = now - date.getTime();
+      const item = {
+        id: c.id,
+        preview: c.title?.trim() || "Nouvelle discussion",
+        at: date.toLocaleString("fr-FR", {
+          day: "2-digit",
+          month: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        active: c.id === conversationId,
+      };
+      if (date >= startOfToday) groups[0].items.push(item);
+      else if (ageMs <= 7 * 24 * 60 * 60 * 1000) groups[1].items.push(item);
+      else if (ageMs <= 30 * 24 * 60 * 60 * 1000) groups[2].items.push(item);
+      else groups[3].items.push(item);
+    }
+    return groups.filter((g) => g.items.length > 0);
   }, [conversations, conversationId]);
+
+  const creditBlocked =
+    Boolean(wallet) &&
+    !wallet?.isPremium &&
+    !wallet?.isFreeAccess &&
+    (wallet?.balance ?? 0) <= 0;
+  const lowCredits =
+    Boolean(wallet) &&
+    !wallet?.isPremium &&
+    !wallet?.isFreeAccess &&
+    (wallet?.balance ?? 0) > 0 &&
+    (wallet?.balance ?? 0) <= Math.max(1, flags.textCreditCost * 2);
 
   const loadFlags = useCallback(async () => {
     const keys = [
@@ -188,11 +257,16 @@ export function ChatExperience({ userId }: Props) {
     });
   }, [supabase, userId]);
 
+  useEffect(() => {
+    if (paymentStatus) void loadWallet();
+  }, [paymentStatus, loadWallet]);
+
   const loadConversations = useCallback(async () => {
     const { data, error: e } = await supabase
       .from("conversations")
       .select("id, title, created_at, updated_at")
       .eq("user_id", userId)
+      .is("archived_at", null)
       .order("updated_at", { ascending: false })
       .limit(40);
     if (e) throw e;
@@ -228,7 +302,11 @@ export function ChatExperience({ userId }: Props) {
         await loadFlags();
         await loadWallet();
         const rows = await loadConversations();
-        let cid = rows[0]?.id ?? null;
+        const requestedId = initialConversationId?.trim() || null;
+        let cid =
+          requestedId && rows.some((row) => row.id === requestedId)
+            ? requestedId
+            : rows[0]?.id ?? null;
         if (!cid) {
           const { conversationId: createdId, error: convErr } =
             await getOrCreatePrimaryConversationId(supabase, userId);
@@ -239,6 +317,7 @@ export function ChatExperience({ userId }: Props) {
         }
         if (cancelled || !cid) return;
         setConversationId(cid);
+        updateChatUrl(cid);
         await loadMessages(cid);
       } catch (err) {
         if (!cancelled) {
@@ -252,7 +331,7 @@ export function ChatExperience({ userId }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [userId, supabase, loadFlags, loadWallet, loadConversations, loadMessages]);
+  }, [userId, supabase, initialConversationId, loadFlags, loadWallet, loadConversations, loadMessages]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
@@ -262,6 +341,7 @@ export function ChatExperience({ userId }: Props) {
     if (!conversationId) return;
     setBusy(true);
     setError(null);
+    setCreditError(null);
     try {
       const r = await postAiChat({
         conversationId,
@@ -278,7 +358,14 @@ export function ChatExperience({ userId }: Props) {
       await loadMessages(conversationId);
       void loadConversations();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Envoi impossible");
+      if (err instanceof CreditError) {
+        setCreditError(CREDIT_EXHAUSTED_MESSAGE);
+        if (typeof err.balance === "number") {
+          setWallet((w) => (w ? { ...w, balance: err.balance as number } : w));
+        }
+      } else {
+        setError(err instanceof Error ? err.message : "Envoi impossible");
+      }
     } finally {
       setBusy(false);
     }
@@ -288,6 +375,7 @@ export function ChatExperience({ userId }: Props) {
     if (!conversationId) return;
     setBusy(true);
     setError(null);
+    setCreditError(null);
     try {
       const path = `${userId}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
       const { error: up } = await supabase.storage
@@ -311,7 +399,14 @@ export function ChatExperience({ userId }: Props) {
       await loadMessages(conversationId);
       void loadConversations();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Image non envoyée");
+      if (err instanceof CreditError) {
+        setCreditError(CREDIT_EXHAUSTED_MESSAGE);
+        if (typeof err.balance === "number") {
+          setWallet((w) => (w ? { ...w, balance: err.balance as number } : w));
+        }
+      } else {
+        setError(err instanceof Error ? err.message : "Image non envoyée");
+      }
     } finally {
       setBusy(false);
     }
@@ -321,6 +416,7 @@ export function ChatExperience({ userId }: Props) {
     if (!conversationId) return;
     setBusy(true);
     setError(null);
+    setCreditError(null);
     try {
       const ext = mime.includes("webm") ? "webm" : mime.includes("mp4") ? "m4a" : "bin";
       const path = `${userId}/${crypto.randomUUID()}.${ext}`;
@@ -345,7 +441,14 @@ export function ChatExperience({ userId }: Props) {
       await loadMessages(conversationId);
       void loadConversations();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Audio non envoyé");
+      if (err instanceof CreditError) {
+        setCreditError(CREDIT_EXHAUSTED_MESSAGE);
+        if (typeof err.balance === "number") {
+          setWallet((w) => (w ? { ...w, balance: err.balance as number } : w));
+        }
+      } else {
+        setError(err instanceof Error ? err.message : "Audio non envoyé");
+      }
     } finally {
       setBusy(false);
     }
@@ -355,6 +458,7 @@ export function ChatExperience({ userId }: Props) {
     if (busy) return;
     setBusy(true);
     setError(null);
+    setCreditError(null);
     try {
       const { data, error: insErr } = await supabase
         .from("conversations")
@@ -362,6 +466,7 @@ export function ChatExperience({ userId }: Props) {
           user_id: userId,
           title: "Nouvelle discussion",
           assistant_state: {},
+          archived_at: null,
         })
         .select("id")
         .single();
@@ -369,6 +474,7 @@ export function ChatExperience({ userId }: Props) {
       const id = String(data.id);
       setConversationId(id);
       setMessages([]);
+      updateChatUrl(id);
       await loadConversations();
       setHistoryOpen(false);
     } catch (err) {
@@ -385,8 +491,10 @@ export function ChatExperience({ userId }: Props) {
     }
     setBusy(true);
     setError(null);
+    setCreditError(null);
     try {
       setConversationId(id);
+      updateChatUrl(id);
       await loadMessages(id);
       setHistoryOpen(false);
     } catch (err) {
@@ -398,27 +506,35 @@ export function ChatExperience({ userId }: Props) {
 
   async function handleDeleteConversation(id: string) {
     if (busy) return;
+    if (!window.confirm("Supprimer cette conversation de l'historique ?")) return;
     setBusy(true);
     setError(null);
+    setCreditError(null);
     try {
-      const { error: delErr } = await supabase.from("conversations").delete().eq("id", id);
+      const { error: delErr } = await supabase
+        .from("conversations")
+        .update({ archived_at: new Date().toISOString() })
+        .eq("id", id)
+        .eq("user_id", userId);
       if (delErr) throw delErr;
       const rows = await loadConversations();
       if (conversationId === id) {
         const nextId = rows[0]?.id ?? null;
         if (nextId) {
           setConversationId(nextId);
+          updateChatUrl(nextId);
           await loadMessages(nextId);
         } else {
           const { data: created, error: insErr } = await supabase
             .from("conversations")
-            .insert({ user_id: userId, title: "Nouvelle discussion", assistant_state: {} })
+            .insert({ user_id: userId, title: "Nouvelle discussion", assistant_state: {}, archived_at: null })
             .select("id")
             .single();
           if (insErr || !created?.id) throw insErr ?? new Error("conversation_create_failed");
           const createdId = String(created.id);
           setConversationId(createdId);
           setMessages([]);
+          updateChatUrl(createdId);
           await loadConversations();
         }
       }
@@ -494,8 +610,14 @@ export function ChatExperience({ userId }: Props) {
           {conversationHistory.length === 0 ? (
             <p className="px-1 text-xs text-[var(--muted)]">Aucun message pour l’instant.</p>
           ) : (
-            <ul className="max-h-[40vh] space-y-1 overflow-y-auto pr-1 lg:max-h-[calc(100vh-14rem)]">
-              {conversationHistory.map((h) => (
+            <ul className="max-h-[40vh] space-y-2 overflow-y-auto pr-1 lg:max-h-[calc(100vh-14rem)]">
+              {conversationHistory.map((group) => (
+                <li key={group.label} className="space-y-1">
+                  <p className="px-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                    {group.label}
+                  </p>
+                  <ul className="space-y-1">
+                    {group.items.map((h) => (
                 <li
                   key={h.id}
                   className={`rounded-xl border px-3 py-2 ${
@@ -528,14 +650,17 @@ export function ChatExperience({ userId }: Props) {
                     </button>
                   </div>
                 </li>
+                    ))}
+                  </ul>
+                </li>
               ))}
             </ul>
           )}
         </div>
         <div className="mt-4 space-y-2">
           {wallet ? <WalletBanner wallet={wallet} flags={flags} /> : null}
-          <Link href="/billing" className="block px-1 text-xs text-[var(--accent)] hover:underline">
-            Gérer crédits / abonnement
+          <Link href={creditsHref(conversationId)} className="block px-1 text-xs text-[var(--accent)] hover:underline">
+            Acheter des crédits
           </Link>
         </div>
       </aside>
@@ -569,6 +694,17 @@ export function ChatExperience({ userId }: Props) {
             {error}
           </div>
         ) : null}
+        {creditError ? (
+          <div
+            className="mx-4 mt-3 rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-soft)] px-4 py-2.5 text-center text-xs text-[var(--danger)] sm:mx-6"
+            role="alert"
+          >
+            <span>{creditError}</span>{" "}
+            <Link href={creditsHref(conversationId)} className="font-semibold underline">
+              Acheter des crédits
+            </Link>
+          </div>
+        ) : null}
         <div className="custom-scrollbar flex-1 overflow-y-auto px-3 pb-36 pt-3 sm:px-6">
           <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-end">
             {messages.length === 0 ? (
@@ -593,6 +729,24 @@ export function ChatExperience({ userId }: Props) {
             imageEnabled={flags.chatImageEnabled}
             voiceEnabled={flags.chatVoiceEnabled}
             busy={busy}
+            actionsDisabled={creditBlocked}
+            disabledReason={
+              creditBlocked ? (
+                <div className="rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-soft)] px-3 py-2 text-xs leading-relaxed text-[var(--danger)]">
+                  <span>{CREDIT_EXHAUSTED_MESSAGE}</span>{" "}
+                  <Link href={creditsHref(conversationId)} className="font-semibold underline">
+                    Acheter des crédits
+                  </Link>
+                </div>
+              ) : lowCredits ? (
+                <div className="rounded-xl border border-[var(--warning)]/30 bg-[var(--warning-soft)] px-3 py-2 text-xs leading-relaxed text-[var(--warning)]">
+                  Solde faible.{" "}
+                  <Link href={creditsHref(conversationId)} className="font-semibold underline">
+                    Acheter des crédits
+                  </Link>
+                </div>
+              ) : null
+            }
             onSendText={handleSendText}
             onSendImage={handleSendImage}
             onSendAudio={handleSendAudio}

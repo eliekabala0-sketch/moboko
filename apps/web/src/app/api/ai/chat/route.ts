@@ -296,8 +296,8 @@ export async function POST(request: Request) {
   if (!billingExempt && creditCost > 0 && balance < creditCost) {
     return NextResponse.json(
       {
-        error: "credits_insuffisants",
-        message: `Il vous faut ${creditCost} crédit(s) pour cette action (solde : ${balance}).`,
+        error: balance <= 0 ? "credits_epuises" : "credits_insuffisants",
+        message: "Vous n’avez plus de crédits pour utiliser l’Assistant. Rechargez votre solde pour continuer.",
         balance,
         required: creditCost,
       },

@@ -3,7 +3,12 @@ import { Masthead } from "@/components/layout/Masthead";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 
-export default async function ChatPage() {
+type ChatPageProps = {
+  searchParams?: Promise<{ conversationId?: string; payment?: string; status?: string }>;
+};
+
+export default async function ChatPage({ searchParams }: ChatPageProps) {
+  const sp = searchParams ? await searchParams : {};
   const supabase = await createSupabaseServerClient();
   if (!supabase) redirect("/auth");
 
@@ -15,7 +20,11 @@ export default async function ChatPage() {
   return (
     <div className="flex min-h-full flex-col">
       <Masthead />
-      <ChatExperience userId={user.id} />
+      <ChatExperience
+        userId={user.id}
+        initialConversationId={sp.conversationId ?? null}
+        paymentStatus={sp.payment ?? sp.status ?? null}
+      />
     </div>
   );
 }

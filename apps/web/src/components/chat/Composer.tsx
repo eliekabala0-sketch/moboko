@@ -1,12 +1,15 @@
 "use client";
 
 import { useRef, useState } from "react";
+import type { ReactNode } from "react";
 
 type Props = {
   textEnabled: boolean;
   imageEnabled: boolean;
   voiceEnabled: boolean;
   busy: boolean;
+  actionsDisabled?: boolean;
+  disabledReason?: ReactNode;
   onSendText: (text: string) => Promise<void>;
   onSendImage: (file: File, caption: string) => Promise<void>;
   onSendAudio: (blob: Blob, mime: string, durationMs: number) => Promise<void>;
@@ -66,6 +69,8 @@ export function Composer({
   imageEnabled,
   voiceEnabled,
   busy,
+  actionsDisabled = false,
+  disabledReason,
   onSendText,
   onSendImage,
   onSendAudio,
@@ -79,7 +84,7 @@ export function Composer({
 
   async function sendTextLine() {
     const t = text.trim();
-    if (!t || busy) return;
+    if (!t || busy || actionsDisabled) return;
     setText("");
     await onSendText(t);
   }
@@ -87,13 +92,13 @@ export function Composer({
   async function onPickImage(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     e.target.value = "";
-    if (!f || busy) return;
+    if (!f || busy || actionsDisabled) return;
     await onSendImage(f, text.trim());
     setText("");
   }
 
   async function toggleRecord() {
-    if (!voiceEnabled || busy) return;
+    if (!voiceEnabled || busy || actionsDisabled) return;
     if (!recording) {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       chunksRef.current = [];
@@ -128,6 +133,7 @@ export function Composer({
   return (
     <div className="border-t border-[var(--border)] bg-[var(--overlay)] px-4 py-4 backdrop-blur-xl">
       <div className="mx-auto flex max-w-3xl flex-col gap-3">
+        {disabledReason ? <div>{disabledReason}</div> : null}
         <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
           <CapabilityChip label="Texte" active={textEnabled} icon="text" />
           <CapabilityChip label="Image" active={imageEnabled} icon="image" />
@@ -145,7 +151,7 @@ export function Composer({
               />
               <button
                 type="button"
-                disabled={busy}
+                disabled={busy || actionsDisabled}
                 onClick={() => fileRef.current?.click()}
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[var(--border-strong)] bg-[var(--surface)] text-[var(--muted)] transition hover:border-[var(--accent)]/35 hover:bg-[var(--surface-elevated)] hover:text-[var(--foreground)] disabled:opacity-40"
                 aria-label="Ajouter une image"
@@ -165,7 +171,7 @@ export function Composer({
           {voiceEnabled ? (
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || actionsDisabled}
               onClick={() => void toggleRecord()}
               className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full border transition disabled:opacity-40 ${
                 recording
@@ -204,7 +210,7 @@ export function Composer({
 
           <button
             type="button"
-            disabled={busy || !text.trim() || !textEnabled}
+            disabled={busy || actionsDisabled || !text.trim() || !textEnabled}
             onClick={() => void sendTextLine()}
             className="moboko-btn-primary flex h-11 shrink-0 items-center justify-center px-5 disabled:opacity-40"
           >
