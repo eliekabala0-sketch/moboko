@@ -195,3 +195,90 @@ export async function importHymnBookAction(formData: FormData) {
   revalidatePath("/admin/hymns");
   revalidatePath("/projection");
 }
+
+function parseReviewedVerses(raw: string) {
+  return raw
+    .split(/\r?\n\s*---\s*\r?\n/g)
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .map((text, index) => ({ number: index + 1, text }));
+}
+
+export async function saveHymnStructureReviewAction(formData: FormData) {
+  const { supabase } = await adminSession();
+  const id = String(formData.get("id") ?? "").trim();
+  const versesRaw = String(formData.get("verses_text") ?? "").trim();
+  const chorus = String(formData.get("chorus") ?? "").trim() || null;
+  if (!id) throw new Error("Cantique introuvable");
+  if (!versesRaw) throw new Error("Au moins un couplet est requis");
+
+  const { data: current, error: currentError } = await supabase
+    .from("hymns")
+    .select("id, verses, chorus, number, book_id")
+    .eq("id", id)
+    .single();
+  if (currentError || !current?.id) throw new Error(currentError?.message ?? "Cantique introuvable");
+
+  const verses = parseReviewedVerses(versesRaw);
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  await supabase.from("hymn_structure_history").insert({
+    hymn_id: id,
+    previous_verses: current.verses ?? [],
+    previous_chorus: current.chorus ?? null,
+    changed_by: user?.id ?? null,
+    source: "admin_review",
+    snapshot: { number: current.number, book_id: current.book_id },
+  });
+
+  const { error } = await supabase
+    .from("hymns")
+    .update({
+      verses: verses as never,
+      chorus,
+      validation_status: "valid",
+      validation_notes: [] as never,
+      confidence_score: "admin_validated",
+      structure_anomalies: [] as never,
+      structure_checked_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+  revalidatePath("/admin/hymns");
+  revalidatePath("/admin/hymns/review");
+  revalidatePath("/hymns");
+  revalidatePath("/projection");
+}
+
+export async function restorePreviousHymnStructureAction(formData: FormData) {
+  const { supabase } = await adminSession();
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) throw new Error("Cantique introuvable");
+  const { data: history, error: historyError } = await supabase
+    .from("hymn_structure_history")
+    .select("previous_verses, previous_chorus")
+    .eq("hymn_id", id)
+    .order("changed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (historyError || !history) throw new Error(historyError?.message ?? "Aucune version precedente");
+
+  const { error } = await supabase
+    .from("hymns")
+    .update({
+      verses: history.previous_verses as never,
+      chorus: history.previous_chorus,
+      validation_status: "needs_review",
+      confidence_score: "restored",
+      structure_anomalies: ["restored_previous_structure"] as never,
+      structure_checked_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+  revalidatePath("/admin/hymns");
+  revalidatePath("/admin/hymns/review");
+  revalidatePath("/hymns");
+  revalidatePath("/projection");
+}

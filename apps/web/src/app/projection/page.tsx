@@ -104,7 +104,7 @@ export default async function ProjectionPage({ searchParams }: Props) {
   if (supabase && kind === "hymn" && sp.hymn) {
     const { data: hymn } = await supabase
       .from("hymns")
-      .select("slug, title, number, category, lyrics, verses, chorus, hymn_books ( name )")
+      .select("slug, title, number, category, lyrics, verses, chorus, validation_status, hymn_books ( name )")
       .eq("slug", sp.hymn)
       .eq("is_published", true)
       .maybeSingle();
@@ -114,8 +114,9 @@ export default async function ProjectionPage({ searchParams }: Props) {
         ? hymn.verses.map(hymnVerseText).filter(Boolean)
         : [];
       const chorus = typeof hymn.chorus === "string" && hymn.chorus.trim() ? hymn.chorus.trim() : null;
+      const structureIsValid = hymn.validation_status !== "needs_review";
       const units =
-        verses.length > 0
+        structureIsValid && verses.length > 0
           ? verses.flatMap((verse, index) => {
               const out = [{ id: `v-${index + 1}`, label: `Couplet ${index + 1}`, text: verse }];
               if (chorus) out.push({ id: `c-${index + 1}`, label: "Refrain", text: chorus });

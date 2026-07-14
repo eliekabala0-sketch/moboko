@@ -38,7 +38,7 @@ export default async function HymnReadPage({ params }: Props) {
   const wantedNumber = decodeURIComponent(number);
   const { data: hymn } = await supabase
     .from("hymns")
-    .select("slug, title, number, lyrics, verses, chorus, key_signature")
+    .select("slug, title, number, lyrics, verses, chorus, key_signature, validation_status")
     .eq("book_id", book.id)
     .eq("number", wantedNumber)
     .eq("is_published", true)
@@ -58,6 +58,7 @@ export default async function HymnReadPage({ params }: Props) {
   const verses = Array.isArray(hymn.verses)
     ? (hymn.verses as VerseValue[]).map(verseText).filter(Boolean)
     : [];
+  const structureIsValid = hymn.validation_status !== "needs_review";
 
   return (
     <div className="flex min-h-full flex-col">
@@ -90,7 +91,12 @@ export default async function HymnReadPage({ params }: Props) {
         </div>
 
         <section className="mt-8 space-y-4">
-          {verses.length > 0 ? (
+          {!structureIsValid ? (
+            <article className="moboko-card p-5">
+              <p className="text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">Texte complet</p>
+              <p className="mt-3 whitespace-pre-wrap text-base leading-relaxed text-[var(--foreground)]">{hymn.lyrics as string}</p>
+            </article>
+          ) : verses.length > 0 ? (
             verses.map((verse, i) => (
               <article key={i} className="moboko-card p-5">
                 <p className="text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">Couplet {i + 1}</p>
@@ -102,7 +108,7 @@ export default async function HymnReadPage({ params }: Props) {
               <p className="whitespace-pre-wrap text-base leading-relaxed text-[var(--foreground)]">{hymn.lyrics as string}</p>
             </article>
           )}
-          {hymn.chorus ? (
+          {structureIsValid && hymn.chorus ? (
             <article className="moboko-card border-[var(--accent)]/30 p-5">
               <p className="text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">Refrain</p>
               <p className="mt-3 whitespace-pre-wrap text-base leading-relaxed text-[var(--foreground)]">{hymn.chorus as string}</p>
@@ -113,4 +119,3 @@ export default async function HymnReadPage({ params }: Props) {
     </div>
   );
 }
-

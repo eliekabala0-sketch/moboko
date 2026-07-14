@@ -6,6 +6,7 @@ import {
   updateHymnBookStatusAction,
 } from "@/app/admin/hymns/actions";
 import { requireAdmin } from "@/lib/admin/require-admin";
+import Link from "next/link";
 
 export const metadata = {
   title: "Cantiques | Admin Moboko",
@@ -45,6 +46,9 @@ export default async function AdminHymnsPage() {
       <h1 className="font-display mt-3 text-3xl font-semibold tracking-tight text-[var(--foreground)]">
         Cantiques
       </h1>
+      <Link href="/admin/hymns/review" className="mt-4 inline-flex text-sm font-semibold text-[var(--accent)] hover:underline">
+        Ouvrir la revue des structures
+      </Link>
       {loadError ? (
         <p className="moboko-card mt-6 border-[var(--warning)]/30 bg-[var(--warning-soft)] p-4 text-sm text-[var(--foreground)]">
           Une partie des donnees n&apos;a pas pu etre chargee : {loadError}
