@@ -7,7 +7,7 @@ type BeforeInstallPromptEvent = Event & {
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 };
 
-export function PwaInstallButton({ className }: { className?: string }) {
+export function PwaInstallButton({ className, label = "Installer Moboko" }: { className?: string; label?: string }) {
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [appInstalled, setAppInstalled] = useState(false);
   const installed =
@@ -54,7 +54,7 @@ export function PwaInstallButton({ className }: { className?: string }) {
       }}
       className={className ?? "moboko-btn-primary px-6 py-3 text-sm disabled:opacity-45"}
     >
-      Installer Moboko
+      {label}
     </button>
   );
 }

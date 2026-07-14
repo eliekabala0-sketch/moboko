@@ -1,4 +1,5 @@
 import { PwaInstallButton } from "@/components/pwa/PwaInstallButton";
+import { fetchPublishedAppearance } from "@/lib/appearance/data";
 import type { Metadata } from "next";
 import Link from "next/link";
 
@@ -7,7 +8,10 @@ export const metadata: Metadata = {
   description: "Installer Moboko sur mobile ou ordinateur.",
 };
 
-export default function DownloadPage() {
+export default async function DownloadPage() {
+  const appearance = await fetchPublishedAppearance();
+  const copy = appearance.pages.download;
+
   return (
     <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10 sm:py-14">
       <section className="grid gap-8 md:grid-cols-[1fr_0.9fr] md:items-start">
@@ -16,18 +20,18 @@ export default function DownloadPage() {
             Moboko
           </p>
           <h1 className="mt-3 font-display text-4xl font-semibold tracking-tight text-[var(--foreground)] sm:text-5xl">
-            Installer Moboko
+            {copy.title}
           </h1>
           <p className="mt-5 max-w-2xl text-base leading-7 text-[var(--muted)]">
-            Accedez rapidement a l&apos;Assistant, aux sermons, a la Bible, aux cantiques et a la projection depuis votre ecran d&apos;accueil.
+            {copy.lead}
           </p>
           <div className="mt-7 flex flex-wrap gap-3">
-            <PwaInstallButton />
+            <PwaInstallButton label={copy.primaryButton} />
             <Link
               href="/chat"
               className="inline-flex rounded-full border border-[var(--border-strong)] bg-[var(--surface)] px-6 py-3 text-sm font-semibold text-[var(--foreground)] transition hover:border-[var(--accent)]/40"
             >
-              Ouvrir Moboko
+              {copy.secondaryButton}
             </Link>
           </div>
         </div>

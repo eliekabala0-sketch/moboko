@@ -24,6 +24,7 @@ export const PUBLIC_APP_SETTING_KEYS = {
   supportOtherAmountEnabled: "support_other_amount_enabled",
   supportMinAmount: "support_min_amount",
   supportMaxAmount: "support_max_amount",
+  appearancePublishedRevisionId: "appearance_published_revision_id",
 } as const;
 
 /** Liste alignée sur `app_setting_is_public_readable` côté SQL. */

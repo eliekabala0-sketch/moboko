@@ -1,9 +1,14 @@
+import { fetchPublishedAppearance } from "@/lib/appearance/data";
 import type { MetadataRoute } from "next";
 
-export default function manifest(): MetadataRoute.Manifest {
+export default async function manifest(): Promise<MetadataRoute.Manifest> {
+  const appearance = await fetchPublishedAppearance();
+  const icon = appearance.brand.logoUrl || appearance.brand.faviconUrl || "/icons/moboko-icon.svg";
+  const iconType = icon.endsWith(".svg") ? "image/svg+xml" : "image/png";
+
   return {
-    name: "Moboko",
-    short_name: "Moboko",
+    name: appearance.brand.siteName || "Moboko",
+    short_name: appearance.brand.siteName || "Moboko",
     description: "Assistant, sermons, Bible, cantiques et projection Moboko.",
     start_url: "/chat",
     scope: "/",
@@ -14,15 +19,15 @@ export default function manifest(): MetadataRoute.Manifest {
     categories: ["books", "education", "productivity"],
     icons: [
       {
-        src: "/icons/moboko-icon.svg",
+        src: icon,
         sizes: "any",
-        type: "image/svg+xml",
+        type: iconType,
         purpose: "any",
       },
       {
-        src: "/icons/moboko-icon.svg",
+        src: icon,
         sizes: "any",
-        type: "image/svg+xml",
+        type: iconType,
         purpose: "maskable",
       },
     ],

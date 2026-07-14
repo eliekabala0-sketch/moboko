@@ -1,21 +1,30 @@
-import Image from "next/image";
+import type { AppearancePayload } from "@/lib/appearance/config";
 import type { PublicHomePageSettings } from "@moboko/shared";
+import Image from "next/image";
 
 type Props = {
   settings: PublicHomePageSettings;
+  appearance?: AppearancePayload;
 };
 
-export function HomeHeroSection({ settings }: Props) {
-  const url = settings.homeHeroImageUrl?.trim();
+export function HomeHeroSection({ settings, appearance }: Props) {
+  const url = appearance?.images.heroImageUrl?.trim() || settings.homeHeroImageUrl?.trim();
   const title =
-    settings.homeHeroTitle?.trim() || "Une présence calme pour avancer avec clarté";
+    appearance?.pages.home.heroTitle?.trim() ||
+    settings.homeHeroTitle?.trim() ||
+    "Une presence calme pour avancer avec clarte";
   const subtitle =
-    settings.homeHeroSubtitle?.trim() || "Chemin intérieur";
+    appearance?.pages.home.heroKicker?.trim() || settings.homeHeroSubtitle?.trim() || "Chemin interieur";
+  const objectPosition = appearance
+    ? `${appearance.images.focalX}% ${appearance.images.focalY}%`
+    : "center center";
+  const zoom = appearance?.images.zoom ?? 1;
+  const overlayOpacity = appearance?.images.overlayOpacity ?? 0.55;
 
   return (
     <section
       className="relative aspect-[21/9] min-h-[240px] w-full max-w-5xl overflow-hidden rounded-[1.75rem] border border-[var(--border-strong)] shadow-[0_32px_80px_-28px_rgba(0,0,0,0.65),inset_0_1px_0_rgba(255,255,255,0.06)]"
-      aria-label="En-tête visuel"
+      aria-label="En-tete visuel"
     >
       {url ? (
         <Image
@@ -24,6 +33,7 @@ export function HomeHeroSection({ settings }: Props) {
           fill
           priority
           className="object-cover"
+          style={{ objectPosition, transform: `scale(${zoom})` }}
           sizes="(max-width: 1024px) 100vw, 1024px"
         />
       ) : (
@@ -33,7 +43,12 @@ export function HomeHeroSection({ settings }: Props) {
         />
       )}
       <div
-        className="absolute inset-0 bg-gradient-to-t from-[var(--background)] via-[var(--background)]/55 to-transparent"
+        className="absolute inset-0 bg-[var(--background)]"
+        style={{ opacity: overlayOpacity }}
+        aria-hidden
+      />
+      <div
+        className="absolute inset-0 bg-gradient-to-t from-[var(--background)]/80 via-transparent to-transparent"
         aria-hidden
       />
       <div className="absolute inset-0 bg-gradient-to-r from-[var(--background)]/40 via-transparent to-transparent" />

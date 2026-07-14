@@ -1,5 +1,7 @@
 import { SignOutButton } from "@/components/auth/SignOutButton";
+import { fetchPublishedAppearance } from "@/lib/appearance/data";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import Image from "next/image";
 import Link from "next/link";
 
 const primaryNav = [
@@ -20,7 +22,10 @@ const secondaryNav = [
 ];
 
 export async function Masthead() {
-  const supabase = await createSupabaseServerClient();
+  const [appearance, supabase] = await Promise.all([
+    fetchPublishedAppearance(),
+    createSupabaseServerClient(),
+  ]);
   let email: string | null = null;
   let isAdmin = false;
   let creditBalance: number | null = null;
@@ -41,21 +46,26 @@ export async function Masthead() {
     }
   }
   const creditLabel = billingExempt
-    ? "Accès offert"
+    ? "Acces offert"
     : creditBalance === 0
-      ? "0 crédit"
+      ? "0 credit"
       : creditBalance !== null && creditBalance <= 2
-        ? `Plus que ${creditBalance} crédit${creditBalance > 1 ? "s" : ""}`
-        : `Crédits : ${creditBalance ?? 0}`;
+        ? `Plus que ${creditBalance} credit${creditBalance > 1 ? "s" : ""}`
+        : `Credits : ${creditBalance ?? 0}`;
+  const appName = appearance.brand.siteName || "Moboko";
+  const logo = appearance.brand.logoUrl;
 
   return (
     <header className="sticky top-0 z-50 border-b border-[var(--border)] bg-[var(--overlay)] backdrop-blur-xl">
       <div className="mx-auto flex h-[4.25rem] max-w-6xl items-center justify-between gap-4 px-6">
         <Link
           href="/"
-          className="shrink-0 font-display text-lg font-semibold tracking-tight text-[var(--foreground)] transition hover:text-[var(--accent)]"
+          className="flex min-w-0 shrink-0 items-center gap-2 font-display text-lg font-semibold tracking-tight text-[var(--foreground)] transition hover:text-[var(--accent)]"
         >
-          Moboko
+          {logo ? (
+            <Image src={logo} alt="" width={30} height={30} className="h-8 w-8 rounded-md object-cover" />
+          ) : null}
+          <span className="truncate">{appName}</span>
         </Link>
         <nav className="hidden min-w-0 items-center gap-5 text-sm font-medium text-[var(--muted)] lg:flex">
           {primaryNav.map((item) => (

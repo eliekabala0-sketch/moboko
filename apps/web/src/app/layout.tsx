@@ -1,5 +1,6 @@
-import type { Metadata, Viewport } from "next";
 import { PwaRegister } from "@/components/pwa/PwaRegister";
+import { fetchPublishedAppearance } from "@/lib/appearance/data";
+import type { Metadata, Viewport } from "next";
 import { Cormorant_Garamond, Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -19,26 +20,32 @@ const mobokoDisplay = Cormorant_Garamond({
   weight: ["500", "600", "700"],
 });
 
-export const metadata: Metadata = {
-  metadataBase: new URL("https://moboko-production.up.railway.app"),
-  applicationName: "Moboko",
-  title: {
-    default: "Moboko",
-    template: "%s · Moboko",
-  },
-  description:
-    "Application spirituelle avec assistant IA, enseignements et projection en temps réel.",
-  manifest: "/manifest.webmanifest",
-  appleWebApp: {
-    capable: true,
-    title: "Moboko",
-    statusBarStyle: "black-translucent",
-  },
-  icons: {
-    icon: "/icons/moboko-icon.svg",
-    apple: "/icons/moboko-icon.svg",
-  },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const appearance = await fetchPublishedAppearance();
+  const appName = appearance.brand.siteName || "Moboko";
+  const icon = appearance.brand.faviconUrl || appearance.brand.logoUrl || "/icons/moboko-icon.svg";
+
+  return {
+    metadataBase: new URL("https://moboko-production.up.railway.app"),
+    applicationName: appName,
+    title: {
+      default: appName,
+      template: `%s - ${appName}`,
+    },
+    description:
+      "Application spirituelle avec assistant IA, enseignements et projection en temps reel.",
+    manifest: "/manifest.webmanifest",
+    appleWebApp: {
+      capable: true,
+      title: appName,
+      statusBarStyle: "black-translucent",
+    },
+    icons: {
+      icon,
+      apple: icon,
+    },
+  };
+}
 
 export const viewport: Viewport = {
   themeColor: "#080b12",
