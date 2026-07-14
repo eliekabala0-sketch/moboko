@@ -11,11 +11,79 @@ type Props = {
   searchParams: Promise<{ version?: string; book?: string; chapter?: string; verse?: string; q?: string }>;
 };
 
+const BIBLE_BOOKS = [
+  "Gen\u00e8se",
+  "Exode",
+  "L\u00e9vitique",
+  "Nombres",
+  "Deut\u00e9ronome",
+  "Josu\u00e9",
+  "Juges",
+  "Ruth",
+  "1 Samuel",
+  "2 Samuel",
+  "1 Rois",
+  "2 Rois",
+  "1 Chroniques",
+  "2 Chroniques",
+  "Esdras",
+  "N\u00e9h\u00e9mie",
+  "Esther",
+  "Job",
+  "Psaumes",
+  "Proverbes",
+  "Eccl\u00e9siaste",
+  "Cantique",
+  "Esa\u00efe",
+  "J\u00e9r\u00e9mie",
+  "Lamentations",
+  "Ez\u00e9chiel",
+  "Daniel",
+  "Os\u00e9e",
+  "Jo\u00ebl",
+  "Amos",
+  "Abdias",
+  "Jonas",
+  "Mich\u00e9e",
+  "Nahum",
+  "Habacuc",
+  "Sophonie",
+  "Agg\u00e9e",
+  "Zacharie",
+  "Malachie",
+  "Matthieu",
+  "Marc",
+  "Luc",
+  "Jean",
+  "Actes",
+  "Romains",
+  "1 Corinthiens",
+  "2 Corinthiens",
+  "Galates",
+  "Eph\u00e9siens",
+  "Philippiens",
+  "Colossiens",
+  "1 Thessaloniciens",
+  "2 Thessaloniciens",
+  "1 Timoth\u00e9e",
+  "2 Timoth\u00e9e",
+  "Tite",
+  "Phil\u00e9mon",
+  "H\u00e9breux",
+  "Jacques",
+  "1 Pierre",
+  "2 Pierre",
+  "1 Jean",
+  "2 Jean",
+  "3 Jean",
+  "Jude",
+  "R\u00e9v\u00e9lation",
+];
+
 const BOOK_ALIASES: Record<string, string> = {
-  genese: "Genèse",
-  genèse: "Genèse",
-  ge: "Genèse",
-  gn: "Genèse",
+  genese: "Gen\u00e8se",
+  ge: "Gen\u00e8se",
+  gn: "Gen\u00e8se",
   psaume: "Psaumes",
   psaumes: "Psaumes",
   ps: "Psaumes",
@@ -50,11 +118,13 @@ function parseReference(q: string, books: string[]) {
 export default async function BiblePage({ searchParams }: Props) {
   const sp = await searchParams;
   const supabase = await createSupabaseServerClient();
+  const books = BIBLE_BOOKS;
   let versions: { abbreviation: string; name: string; testament_scope?: string | null }[] = [];
-  let books: string[] = [];
   let chapters: number[] = [];
   let verses: { book: string; chapter: number; verse: number; text: string; translation: string }[] = [];
   let results: { book: string; chapter: number; verse: number; text: string; translation: string }[] = [];
+  let currentBook = "";
+  let currentChapter = 1;
 
   if (supabase) {
     const { data: versionRows } = await supabase
@@ -65,36 +135,27 @@ export default async function BiblePage({ searchParams }: Props) {
     versions = (versionRows ?? []) as typeof versions;
     if (versions.length === 0) versions = [{ abbreviation: "LSG1910", name: "Bible Louis Segond 1910", testament_scope: "partial" }];
     const selectedVersion = sp.version?.trim() || versions[0]?.abbreviation || "LSG1910";
-
-    const { data: refRows } = await supabase
-      .from("bible_passages")
-      .select("book, chapter")
-      .eq("translation", selectedVersion)
-      .order("book", { ascending: true })
-      .order("chapter", { ascending: true })
-      .limit(40000);
-    const bookMap = new Map<string, Set<number>>();
-    for (const row of refRows ?? []) {
-      const book = String(row.book);
-      const set = bookMap.get(book) ?? new Set<number>();
-      set.add(Number(row.chapter));
-      bookMap.set(book, set);
-    }
-    books = [...bookMap.keys()];
-
     const q = sp.q?.trim() ?? "";
     const ref = q ? parseReference(q, books) : null;
-    const selectedBook = ref?.book || sp.book?.trim() || books[0] || "";
-    const selectedChapter = ref?.chapter || parsePositiveInt(sp.chapter) || (selectedBook ? Math.min(...(bookMap.get(selectedBook) ?? new Set([1]))) : 1);
-    chapters = [...(bookMap.get(selectedBook) ?? new Set<number>())].sort((a, b) => a - b);
+    currentBook = ref?.book || resolveBook(sp.book?.trim() || books[0] || "", books);
 
-    if (selectedBook && selectedChapter) {
+    const { data: chapterRows } = await supabase
+      .from("bible_passages")
+      .select("chapter")
+      .eq("translation", selectedVersion)
+      .eq("book", currentBook)
+      .order("chapter", { ascending: true })
+      .limit(2500);
+    chapters = [...new Set((chapterRows ?? []).map((row) => Number(row.chapter)).filter(Boolean))].sort((a, b) => a - b);
+    currentChapter = ref?.chapter || parsePositiveInt(sp.chapter) || chapters[0] || 1;
+
+    if (currentBook && currentChapter) {
       let verseQuery = supabase
         .from("bible_passages")
         .select("translation, book, chapter, verse, text")
         .eq("translation", selectedVersion)
-        .eq("book", selectedBook)
-        .eq("chapter", selectedChapter)
+        .eq("book", currentBook)
+        .eq("chapter", currentChapter)
         .order("verse", { ascending: true })
         .limit(180);
       if (ref?.verse) verseQuery = verseQuery.eq("verse", ref.verse);
@@ -113,15 +174,15 @@ export default async function BiblePage({ searchParams }: Props) {
         .limit(80);
       if (sp.book) searchQuery = searchQuery.eq("book", resolveBook(sp.book, books));
       searchQuery = searchQuery.or(`text.ilike.%${safe}%,text.ilike.%${best}%`);
-      const { data: resultRows } = await searchQuery.order("book", { ascending: true }).order("chapter", { ascending: true }).order("verse", { ascending: true });
+      const { data: resultRows } = await searchQuery.order("book_number", { ascending: true }).order("chapter", { ascending: true }).order("verse", { ascending: true });
       results = (resultRows ?? []) as typeof results;
     }
   }
 
   const selectedVersion = sp.version?.trim() || versions[0]?.abbreviation || "LSG1910";
   const q = sp.q?.trim() ?? "";
-  const currentBook = sp.book?.trim() || verses[0]?.book || books[0] || "";
-  const currentChapter = parsePositiveInt(sp.chapter) || verses[0]?.chapter || chapters[0] || 1;
+  currentBook = currentBook || resolveBook(sp.book?.trim() || books[0] || "", books);
+  currentChapter = currentChapter || parsePositiveInt(sp.chapter) || verses[0]?.chapter || chapters[0] || 1;
   const chapterIndex = chapters.findIndex((chapter) => chapter === currentChapter);
   const prevChapter = chapterIndex > 0 ? chapters[chapterIndex - 1] : null;
   const nextChapter = chapterIndex >= 0 && chapterIndex < chapters.length - 1 ? chapters[chapterIndex + 1] : null;
@@ -202,7 +263,7 @@ export default async function BiblePage({ searchParams }: Props) {
               {results.map((row) => (
                 <Link key={`${row.book}-${row.chapter}-${row.verse}`} href={`/bible?version=${row.translation}&book=${encodeURIComponent(row.book)}&chapter=${row.chapter}&q=${encodeURIComponent(`${row.book} ${row.chapter}:${row.verse}`)}`} className="moboko-card p-4 transition hover:border-[var(--border-strong)]">
                   <p className="text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">
-                    {row.translation} · {row.book} {row.chapter}:{row.verse}
+                    {row.translation}{" / "}{row.book} {row.chapter}:{row.verse}
                   </p>
                   <p className="mt-2 text-sm leading-relaxed text-[var(--foreground)]">{row.text}</p>
                 </Link>
@@ -219,7 +280,7 @@ export default async function BiblePage({ searchParams }: Props) {
             {verses.map((row) => (
               <article key={`${row.book}-${row.chapter}-${row.verse}`} className="moboko-card p-4">
                 <p className="text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">
-                  {row.translation} · {row.book} {row.chapter}:{row.verse}
+                  {row.translation}{" / "}{row.book} {row.chapter}:{row.verse}
                 </p>
                 <p className="mt-2 text-base leading-relaxed text-[var(--foreground)]">{row.text}</p>
               </article>
@@ -233,4 +294,3 @@ export default async function BiblePage({ searchParams }: Props) {
     </div>
   );
 }
-

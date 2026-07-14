@@ -33,27 +33,30 @@ export default async function HymnsPage({ searchParams }: Props) {
       .order("name", { ascending: true });
     books = (bookRows ?? []) as typeof books;
 
-    let query = supabase
-      .from("hymns")
-      .select("slug, title, number, lyrics, hymn_books ( name, slug )")
-      .eq("is_published", true)
-      .limit(q ? 80 : 180);
+    const shouldLoadHymns = Boolean(selectedBook || q);
+    if (shouldLoadHymns) {
+      let query = supabase
+        .from("hymns")
+        .select("slug, title, number, lyrics, hymn_books ( name, slug )")
+        .eq("is_published", true)
+        .limit(q ? 80 : 140);
 
-    if (selectedBook) query = query.eq("book_id", selectedBook);
-    if (q) {
-      const safe = sanitizeLike(q);
-      const terms = significantTerms(q);
-      if (/^\d+/.test(safe)) {
-        query = query.or(`number.eq.${safe},number.ilike.${safe}%,title.ilike.%${safe}%,lyrics.ilike.%${safe}%`);
-      } else {
-        const best = terms[0] ?? safe;
-        query = query.or(
-          `title.eq.${safe},title.ilike.${safe}%,title.ilike.%${safe}%,lyrics.ilike.%${safe}%,title.ilike.%${best}%,lyrics.ilike.%${best}%`,
-        );
+      if (selectedBook) query = query.eq("book_id", selectedBook);
+      if (q) {
+        const safe = sanitizeLike(q);
+        const terms = significantTerms(q);
+        if (/^\d+/.test(safe)) {
+          query = query.or(`number.eq.${safe},number.ilike.${safe}%,title.ilike.%${safe}%,lyrics.ilike.%${safe}%`);
+        } else {
+          const best = terms[0] ?? safe;
+          query = query.or(
+            `title.eq.${safe},title.ilike.${safe}%,title.ilike.%${safe}%,lyrics.ilike.%${safe}%,title.ilike.%${best}%,lyrics.ilike.%${best}%`,
+          );
+        }
       }
+      const { data: hymnRows } = await query.order("display_order", { ascending: true }).order("number", { ascending: true });
+      hymns = (hymnRows ?? []) as typeof hymns;
     }
-    const { data: hymnRows } = await query.order("number", { ascending: true });
-    hymns = (hymnRows ?? []) as typeof hymns;
   }
 
   return (
@@ -126,12 +129,14 @@ export default async function HymnsPage({ searchParams }: Props) {
               </article>
             );
           })}
-          {hymns.length === 0 ? (
+          {hymns.length === 0 && (selectedBook || q) ? (
             <p className="moboko-card p-6 text-sm text-[var(--muted)]">Aucun cantique disponible pour cette recherche.</p>
+          ) : null}
+          {hymns.length === 0 && !selectedBook && !q ? (
+            <p className="moboko-card p-6 text-sm text-[var(--muted)]">Choisissez un livre ou lancez une recherche pour afficher les chants.</p>
           ) : null}
         </section>
       </main>
     </div>
   );
 }
-
