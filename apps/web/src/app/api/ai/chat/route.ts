@@ -558,7 +558,7 @@ export async function POST(request: Request) {
       } catch (e) {
         console.error("[moboko-openai] failure_reason=assistant_unavailable", e instanceof Error ? e.message : String(e));
         return NextResponse.json(
-          { error: "assistant_indisponible", detail: "La conversation OpenAI n'a pas pu aboutir." },
+          { error: "assistant_indisponible", detail: "L'Assistant est temporairement indisponible. Reessayez dans un instant." },
           { status: 503 },
         );
       }

@@ -830,35 +830,52 @@ export async function runOpenAiSermonAgent(opts: {
   const toolResultsByKey = new Map<string, ConcordanceHit>();
   const historyBlock = compactHistory(opts.history);
   let response: JsonRecord;
+  const initialRequest: JsonRecord = {
+    model,
+    instructions: buildInstructions(state, historyBlock.length),
+    input: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: JSON.stringify({
+              current_message: opts.userMessage,
+              useful_history: historyBlock,
+            }),
+          },
+        ],
+      },
+    ],
+    tools,
+    tool_choice: "auto",
+    text: { format: finalJsonFormat },
+    temperature: 0.15,
+    max_output_tokens: 1400,
+  };
   try {
     response = (await (opts.openai as unknown as { responses: { create: (args: JsonRecord) => Promise<unknown> } }).responses.create({
-      model,
-      instructions: buildInstructions(state, historyBlock.length),
-      input: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: JSON.stringify({
-                current_message: opts.userMessage,
-                useful_history: historyBlock,
-              }),
-            },
-          ],
-        },
-      ],
-      tools,
-      tool_choice: "auto",
-      text: { format: finalJsonFormat },
+      ...initialRequest,
       previous_response_id: previousResponseId || undefined,
-      temperature: 0.15,
-      max_output_tokens: 1400,
     })) as JsonRecord;
     diagnostics.openai_calls += 1;
   } catch (e) {
-    diagnostics.failure_reason = "openai_initial_failed";
-    throw e;
+    if (previousResponseId) {
+      try {
+        response = (await (opts.openai as unknown as { responses: { create: (args: JsonRecord) => Promise<unknown> } }).responses.create(
+          initialRequest,
+        )) as JsonRecord;
+        diagnostics.openai_calls += 1;
+        diagnostics.previous_response_linked = false;
+        state.last_openai_response_id = null;
+      } catch {
+        diagnostics.failure_reason = "openai_initial_failed";
+        throw e;
+      }
+    } else {
+      diagnostics.failure_reason = "openai_initial_failed";
+      throw e;
+    }
   }
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {

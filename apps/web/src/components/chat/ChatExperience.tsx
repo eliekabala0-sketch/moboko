@@ -101,6 +101,9 @@ async function postAiChat(body: Record<string, unknown>) {
         typeof data.required === "number" ? data.required : null,
       );
     }
+    if (data.error === "assistant_indisponible") {
+      throw new Error("L’Assistant est temporairement indisponible. Réessayez dans un instant.");
+    }
     throw new Error(
       typeof data.detail === "string"
         ? data.detail
