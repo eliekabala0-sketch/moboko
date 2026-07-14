@@ -143,7 +143,17 @@ export function ConcordanceHitsView({
         setLoadMoreError("Les résultats suivants n'ont pas pu être chargés. Réessayez.");
         return;
       }
-      setItems((prev) => [...prev, ...nextHits]);
+      setItems((prev) => {
+        const seen = new Set(prev.map(hitKey));
+        const merged = [...prev];
+        for (const hit of nextHits) {
+          const key = hitKey(hit);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(hit);
+        }
+        return merged;
+      });
       setVisible((v) => v + nextHits.length);
     } finally {
       setLoadingMore(false);

@@ -1,0 +1,576 @@
+{
+  "generated_at": "2026-07-14T06:57:20.184Z",
+  "dry_run": true,
+  "analyzed": 523,
+  "updates": 488,
+  "with_chorus": 292,
+  "without_chorus": 231,
+  "ambiguous": [
+    {
+      "book": "crois-seulement",
+      "number": 4,
+      "title": "JE L’AIME.",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": true,
+      "text_length_delta": 90
+    },
+    {
+      "book": "crois-seulement",
+      "number": 64,
+      "title": "EMBARQUEZ",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 3
+    },
+    {
+      "book": "crois-seulement",
+      "number": 66,
+      "title": "ECLAIRE-MOI",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 33
+    },
+    {
+      "book": "crois-seulement",
+      "number": 69,
+      "title": "OUVRE MES YEUX POUR",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": -386
+    },
+    {
+      "book": "crois-seulement",
+      "number": 72,
+      "title": "OH! VEUX-TU VEILLER AVEC MOI?",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 54
+    },
+    {
+      "book": "crois-seulement",
+      "number": 76,
+      "title": "ENFERME AVEC DIEU",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": -34
+    },
+    {
+      "book": "crois-seulement",
+      "number": 79,
+      "title": "INONDE MON AME.",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "crois-seulement",
+      "number": 82,
+      "title": "IL VIENT DE NOUVEAU. F",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "crois-seulement",
+      "number": 103,
+      "title": "N’OUBLIEZ PAS LA PRIERE F EN FAMILLE",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": -40
+    },
+    {
+      "book": "crois-seulement",
+      "number": 106,
+      "title": "TENDS LA MAIN ET TOUCHE LE SEIGNEUR",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 103
+    },
+    {
+      "book": "crois-seulement",
+      "number": 110,
+      "title": "OH! C’EST JESUS !",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "crois-seulement",
+      "number": 112,
+      "title": "LA FOI EN JEHOVAH",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 115
+    },
+    {
+      "book": "crois-seulement",
+      "number": 119,
+      "title": "J’AI TRAVERSE LE VOILE FENDU",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": -9
+    },
+    {
+      "book": "crois-seulement",
+      "number": 122,
+      "title": "JUSTE UN AUTRE TOUCHER, SEIGNEUR",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 59
+    },
+    {
+      "book": "crois-seulement",
+      "number": 1,
+      "title": "IL M’A AFFRANCHI",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": true,
+      "text_length_delta": -38
+    },
+    {
+      "book": "crois-seulement",
+      "number": 11,
+      "title": "AZALI EBOMBAMELO",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": true,
+      "text_length_delta": -563
+    },
+    {
+      "book": "hosanna",
+      "number": 95,
+      "title": "VOIR MON SAUVEUR FACE À FACE Son Epoux.",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": true,
+      "text_length_delta": -7
+    },
+    {
+      "book": "hosanna",
+      "number": 177,
+      "title": "MERCI JESUS AMEN",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "hosanna",
+      "number": 179,
+      "title": "C’EST BIEN LE TEMPS DU SOIR",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "hosanna",
+      "number": 180,
+      "title": "LE SANG DE JESUS",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "hosanna",
+      "number": 185,
+      "title": "QUEL DIEU PUISSANT",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "hosanna",
+      "number": 186,
+      "title": "NE, NE DE NOUVEAU",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "hosanna",
+      "number": 187,
+      "title": "NOUS SERONS CHANGES",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "hosanna",
+      "number": 188,
+      "title": "PSAUME 122 : 1",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 85
+    },
+    {
+      "book": "hosanna",
+      "number": 190,
+      "title": "IL NE PEUT FAILLIR",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "hosanna",
+      "number": 191,
+      "title": "LA BONTE DE JESUS",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "hosanna",
+      "number": 197,
+      "title": "JESUS EST VIVANT",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "hosanna",
+      "number": 198,
+      "title": "EXALTE AVEC MOI LE SEIGNEUR",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "hosanna",
+      "number": 199,
+      "title": "JE VIS SUR LA MONTAGNE",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 25
+    },
+    {
+      "book": "hosanna",
+      "number": 201,
+      "title": "LA PROMESSE DE DIEU EST VRAIE",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "hosanna",
+      "number": 202,
+      "title": "OH! SEIGNEUR, JE VIENS A TOI",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": -25
+    },
+    {
+      "book": "hosanna",
+      "number": 206,
+      "title": "AU NOM DE JESUS",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "hosanna",
+      "number": 207,
+      "title": "EMMANUEL",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "hosanna",
+      "number": 213,
+      "title": "IL EST SEIGNEUR",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "hosanna",
+      "number": 215,
+      "title": "DOUX JESUS",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 62
+    },
+    {
+      "book": "hosanna",
+      "number": 219,
+      "title": "JESUS, NOM AU-DESSUS DE TOUS NOMS.",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": -33
+    },
+    {
+      "book": "hosanna",
+      "number": 222,
+      "title": "J’AI QUELQUE CHOSE",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 70
+    },
+    {
+      "book": "hosanna",
+      "number": 233,
+      "title": "SOURIANT",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 45,
+      "title": "AZALI NA YO",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 49,
+      "title": "NALINGI YE",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 59,
+      "title": "MOTO EPELI",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 65,
+      "title": "EMMANUEL",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 68,
+      "title": "NALINGI YE NTANGO NYONSO",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 71,
+      "title": "BILAKA YA BIBLIA",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": -30
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 73,
+      "title": "YESU, NAKOBOSANA TE",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 85,
+      "title": "BONDELA NA NGAI NGONGA MOKO",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 87,
+      "title": "KUMISA YESU, KUMISA EMMANUEL",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 88,
+      "title": "AZALI NDE NKOLO",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 89,
+      "title": "ELONGA YA NGAI",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 90,
+      "title": "TALA LELO NDE MOKOLO",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 91,
+      "title": "TOKENDENI",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 93,
+      "title": "ASIKOLI NGAI",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 94,
+      "title": "YOKA NTINA",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 37
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 95,
+      "title": "ESENGO",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 97,
+      "title": "TOZALI BANA YA TATA",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 103,
+      "title": "NA LIBOTA...",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 112,
+      "title": "TOTONDI N’ESENGO",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": true,
+      "text_length_delta": -7
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 119,
+      "title": "NANDIMI SÔLO",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": true,
+      "text_length_delta": -7
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 130,
+      "title": "NA NKOMBO NA YESU",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": 0
+    },
+    {
+      "book": "pene-na-yo",
+      "number": 148,
+      "title": "YANGO MASUWA NA SIONA",
+      "notes": [],
+      "verses": 1,
+      "has_chorus": false,
+      "text_length_delta": -66
+    }
+  ],
+  "raw_text_changed": 0,
+  "books": [
+    {
+      "slug": "crois-seulement",
+      "pdf": "Cantiques Crois seulement.pdf",
+      "detected_hymns": 188,
+      "imported_hymns": 223,
+      "updates": 173
+    },
+    {
+      "slug": "hosanna",
+      "pdf": "Cantiques Hosana.pdf",
+      "detected_hymns": 210,
+      "imported_hymns": 246,
+      "updates": 196
+    },
+    {
+      "slug": "pene-na-yo",
+      "pdf": "Cantique Pene Na Yo (1).pdf",
+      "detected_hymns": 136,
+      "imported_hymns": 150,
+      "updates": 119
+    }
+  ],
+  "production_updated": 0,
+  "ambiguous_count": 60
+}

@@ -39,6 +39,15 @@ function resolveStartIndex(items: { number: number }[], wanted: number | null) {
   return idx >= 0 ? idx : 0;
 }
 
+function hymnVerseText(value: unknown) {
+  if (typeof value === "string") return value.trim();
+  if (value && typeof value === "object" && "text" in value) {
+    const text = (value as { text?: unknown }).text;
+    return typeof text === "string" ? text.trim() : "";
+  }
+  return "";
+}
+
 export default async function ProjectionPage({ searchParams }: Props) {
   const sp = await searchParams;
   const supabase = await createSupabaseServerClient();
@@ -102,7 +111,7 @@ export default async function ProjectionPage({ searchParams }: Props) {
 
     if (hymn?.lyrics) {
       const verses = Array.isArray(hymn.verses)
-        ? (hymn.verses.filter((v) => typeof v === "string") as string[])
+        ? hymn.verses.map(hymnVerseText).filter(Boolean)
         : [];
       const chorus = typeof hymn.chorus === "string" && hymn.chorus.trim() ? hymn.chorus.trim() : null;
       const units =

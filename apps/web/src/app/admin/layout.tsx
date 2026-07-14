@@ -29,6 +29,12 @@ export default async function AdminLayout({
               Paramètres
             </Link>
             <Link
+              href="/admin/appearance"
+              className="text-sm text-[var(--muted)] transition hover:text-[var(--foreground)]"
+            >
+              Apparence
+            </Link>
+            <Link
               href="/admin/users"
               className="text-sm text-[var(--muted)] transition hover:text-[var(--foreground)]"
             >
