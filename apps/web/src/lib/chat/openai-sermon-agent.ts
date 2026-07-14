@@ -47,6 +47,7 @@ type AgentToolResult = {
 export type OpenAiSermonAgentResult = {
   text: string;
   hits: ConcordanceHit[];
+  candidateRefs?: Array<{ slug: string; paragraph_number: number; title?: string; date?: string | null }>;
   totalCount: number;
   hasMore: boolean;
   nextOffset: number | null;
@@ -465,6 +466,7 @@ async function executeTool(
       conversation_id: ctx.conversationId,
       preferred_sermon_slug: ctx.state.active_sermon_slug ?? null,
     });
+    ctx.state.active_scope = result.scope;
     for (const hit of result.results) ctx.toolResultsByKey.set(refKey(hit), hit);
     return summarizeToolResult(result);
   }
@@ -475,6 +477,7 @@ async function executeTool(
       page_size: pageSize,
       conversation_id: ctx.conversationId,
     });
+    ctx.state.active_scope = result.scope;
     for (const hit of result.results) ctx.toolResultsByKey.set(refKey(hit), hit);
     return summarizeToolResult(result);
   }
@@ -488,6 +491,7 @@ async function executeTool(
       conversation_id: ctx.conversationId,
       preferred_sermon_slug: ctx.state.active_sermon_slug ?? null,
     });
+    ctx.state.active_scope = result.scope;
     for (const hit of result.results) ctx.toolResultsByKey.set(refKey(hit), hit);
     return summarizeToolResult(result);
   }
@@ -505,6 +509,7 @@ async function executeTool(
       page_size: pageSize,
       conversation_id: ctx.conversationId,
     });
+    ctx.state.active_scope = result.scope;
     for (const hit of result.results) ctx.toolResultsByKey.set(refKey(hit), hit);
     return summarizeToolResult(result);
   }
@@ -978,11 +983,14 @@ export async function runOpenAiSermonAgent(opts: {
   });
   diagnostics.rehydrated_count = hits.length;
 
-  const scope: RetrievalScope =
-    hits.length > 0 && hits.every((h) => h.slug === hits[0]!.slug)
-      ? { kind: "sermon", sermon_slug: hits[0]!.slug }
-      : state.active_scope ?? { kind: "library" };
+  const scope: RetrievalScope = state.active_scope ?? { kind: "library" };
   const activeRefs = hits.map((h) => ({
+    slug: h.slug,
+    paragraph_number: h.paragraph_number,
+    title: h.title,
+    date: h.date,
+  }));
+  const candidateRefs = [...toolResultsByKey.values()].map((h) => ({
     slug: h.slug,
     paragraph_number: h.paragraph_number,
     title: h.title,
@@ -1011,6 +1019,7 @@ export async function runOpenAiSermonAgent(opts: {
   return {
     text: hits.length === 0 ? userMessage || EMPTY_MESSAGE : "",
     hits,
+    candidateRefs: candidateRefs.length > activeRefs.length ? candidateRefs : activeRefs,
     totalCount: Math.max(totalRelevant, hits.length),
     hasMore,
     nextOffset,

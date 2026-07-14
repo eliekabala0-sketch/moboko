@@ -11,6 +11,8 @@ import { createSupabaseServiceClient } from "@/lib/supabase/service";
 import { tool_continue_last_scope } from "@/lib/chat/sermon-retrieval-tools";
 import { runOpenAiSermonAgent } from "@/lib/chat/openai-sermon-agent";
 import { ensureMonthlySubscriptionCredits } from "@/lib/billing/subscription-credits";
+import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
+import { fetchSingleParagraphCandidate } from "@/lib/sermons/retrieval-direct";
 import {
   ALL_PUBLIC_APP_SETTING_KEYS,
   parseAppSettingScalar,
@@ -103,16 +105,68 @@ function pathBelongsToUser(path: string, userId: string) {
 
 const EMPTY_CONCORDANCE_MESSAGE = "Aucun passage suffisamment précis n'a été trouvé pour cette formulation.";
 
+function coerceStoredRefs(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  const refs: Array<{ slug: string; paragraph_number: number }> = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const row = item as Record<string, unknown>;
+    const slug = typeof row.slug === "string" ? row.slug.trim() : "";
+    const paragraphNumber = Math.floor(Number(row.paragraph_number));
+    const key = `${slug}:${paragraphNumber}`;
+    if (!slug || !Number.isFinite(paragraphNumber) || paragraphNumber < 1 || seen.has(key)) continue;
+    seen.add(key);
+    refs.push({ slug, paragraph_number: paragraphNumber });
+  }
+  return refs;
+}
+
+async function rehydrateStoredRefs(
+  admin: NonNullable<ReturnType<typeof createSupabaseServiceClient>>,
+  refs: Array<{ slug: string; paragraph_number: number }>,
+  meta: {
+    query: string;
+    conversationId: string;
+    offset: number;
+    pageSize: number;
+    totalCount: number;
+    hasMore: boolean;
+    nextOffset: number | null;
+  },
+) {
+  const out: Record<string, unknown>[] = [];
+  for (const ref of refs) {
+    const c = await fetchSingleParagraphCandidate(admin, ref.slug, ref.paragraph_number);
+    if (!c) continue;
+    const n = await fetchNeighborParagraphs(admin, c.slug, c.paragraph_number);
+    out.push({
+      slug: c.slug,
+      title: c.title,
+      year: c.year,
+      preached_on: c.preached_on,
+      location: c.location ?? null,
+      paragraph_number: c.paragraph_number,
+      paragraph_text: c.paragraph_text,
+      prev_paragraph_number: n.prev_paragraph_number,
+      prev_paragraph_text: n.prev_paragraph_text,
+      next_paragraph_number: n.next_paragraph_number,
+      next_paragraph_text: n.next_paragraph_text,
+      _source: "chat",
+      _query: meta.query,
+      _conversation_id: meta.conversationId,
+      _offset: meta.offset,
+      _page_size: meta.pageSize,
+      _next_offset: meta.nextOffset,
+      _has_more: meta.hasMore,
+      _total_count: meta.totalCount,
+    });
+  }
+  return out;
+}
+
 export async function POST(request: Request) {
   const openai = getOpenAIClient();
-  if (!openai) {
-    console.log("[chat-openai] missing_api_key");
-    return NextResponse.json(
-      { error: "openai_non_configure", detail: "OPENAI_API_KEY manquante côté serveur." },
-      { status: 503 },
-    );
-  }
-
   const admin = createSupabaseServiceClient();
   if (!admin) {
     return NextResponse.json(
@@ -164,6 +218,8 @@ export async function POST(request: Request) {
       .limit(30);
     let lastScope: unknown = null;
     let lastQuery: string | null = null;
+    let expectedTotal: number | null = null;
+    let storedRefs: Array<{ slug: string; paragraph_number: number }> = [];
     if (body.assistantMessageId) {
       const { data: messageRow } = await admin
         .from("messages")
@@ -185,7 +241,52 @@ export async function POST(request: Request) {
       if (retrieval && listMatches) {
         lastQuery = typeof retrieval.query === "string" ? retrieval.query.trim() : null;
         lastScope = retrieval.scope;
+        expectedTotal =
+          typeof retrieval.total_count === "number" && Number.isFinite(retrieval.total_count)
+            ? Math.max(0, Math.floor(retrieval.total_count))
+            : null;
+        const state =
+          meta?.moboko_assistant_state &&
+          typeof meta.moboko_assistant_state === "object" &&
+          !Array.isArray(meta.moboko_assistant_state)
+            ? (meta.moboko_assistant_state as Record<string, unknown>)
+            : null;
+        const lists =
+          state?.result_lists && typeof state.result_lists === "object" && !Array.isArray(state.result_lists)
+            ? (state.result_lists as Record<string, unknown>)
+            : null;
+        const storedList =
+          body.listId && lists?.[body.listId] && typeof lists[body.listId] === "object" && !Array.isArray(lists[body.listId])
+            ? (lists[body.listId] as Record<string, unknown>)
+            : null;
+        storedRefs = coerceStoredRefs(storedList?.references);
       }
+    }
+    if (storedRefs.length > offset) {
+      const pageRefs = storedRefs.slice(offset, offset + pageSize);
+      const end = offset + pageRefs.length;
+      const storedTotal = Math.max(expectedTotal ?? storedRefs.length, storedRefs.length);
+      const hasMore = end < storedRefs.length;
+      const nextOffset = hasMore ? end : null;
+      const results = await rehydrateStoredRefs(admin, pageRefs, {
+        query: lastQuery ?? query,
+        conversationId: body.conversationId,
+        offset,
+        pageSize,
+        totalCount: storedTotal,
+        hasMore,
+        nextOffset,
+      });
+      return NextResponse.json({
+        ok: true,
+        results,
+        total_count: storedTotal,
+        offset,
+        page_size: pageSize,
+        has_more: hasMore,
+        next_offset: nextOffset,
+        message: results.length === 0 ? EMPTY_CONCORDANCE_MESSAGE : null,
+      });
     }
     for (const r of recent ?? []) {
       if (lastQuery) break;
@@ -208,26 +309,50 @@ export async function POST(request: Request) {
         break;
       }
     }
-    const result = await tool_continue_last_scope(admin, {
-      last_scope:
-        lastScope && typeof lastScope === "object" && !Array.isArray(lastScope) && (lastScope as Record<string, unknown>).kind === "sermon"
-          ? { kind: "sermon", sermon_slug: String((lastScope as Record<string, unknown>).sermon_slug ?? "").trim() }
-          : { kind: "library" },
+    const initialScope =
+      lastScope && typeof lastScope === "object" && !Array.isArray(lastScope) && (lastScope as Record<string, unknown>).kind === "sermon"
+        ? { kind: "sermon" as const, sermon_slug: String((lastScope as Record<string, unknown>).sermon_slug ?? "").trim() }
+        : { kind: "library" as const };
+    let result = await tool_continue_last_scope(admin, {
+      last_scope: initialScope,
       last_query: lastQuery ?? query,
       next_offset: offset,
       page_size: pageSize,
       conversation_id: body.conversationId,
     });
+    if (result.results.length === 0 && offset > 0 && initialScope.kind === "sermon") {
+      result = await tool_continue_last_scope(admin, {
+        last_scope: { kind: "library" },
+        last_query: lastQuery ?? query,
+        next_offset: offset,
+        page_size: pageSize,
+        conversation_id: body.conversationId,
+      });
+    }
+    const visibleTotal = expectedTotal == null ? result.total_count : Math.min(expectedTotal, result.total_count);
+    const allowedCount = expectedTotal == null ? result.results.length : Math.max(0, visibleTotal - offset);
+    const visibleResults = result.results.slice(0, allowedCount);
+    const end = offset + visibleResults.length;
+    const hasMore = expectedTotal == null ? result.has_more : end < visibleTotal;
+    const nextOffset = hasMore ? end : null;
     return NextResponse.json({
       ok: true,
-      results: result.results,
-      total_count: result.total_count,
+      results: visibleResults,
+      total_count: visibleTotal,
       offset: result.offset,
       page_size: result.page_size,
-      has_more: result.has_more,
-      next_offset: result.next_offset,
-      message: result.total_count === 0 ? EMPTY_CONCORDANCE_MESSAGE : null,
+      has_more: hasMore,
+      next_offset: nextOffset,
+      message: visibleResults.length === 0 ? EMPTY_CONCORDANCE_MESSAGE : null,
     });
+  }
+
+  if (!openai) {
+    console.log("[chat-openai] missing_api_key");
+    return NextResponse.json(
+      { error: "openai_non_configure", detail: "OPENAI_API_KEY manquante côté serveur." },
+      { status: 503 },
+    );
   }
 
   const { data: settingRows } = await admin
@@ -464,6 +589,15 @@ export async function POST(request: Request) {
         sermonContextCount = agent.hits.length;
         assistantText = agent.text;
         activeListId = agent.hits.length > 0 ? crypto.randomUUID() : null;
+        const listReferences =
+          agent.candidateRefs && agent.candidateRefs.length > agent.hits.length
+            ? agent.candidateRefs
+            : agent.hits.map((h) => ({
+                slug: h.slug,
+                paragraph_number: h.paragraph_number,
+                title: h.title,
+                date: h.date,
+              }));
         const stateWithList =
           activeListId && agent.hits.length > 0
             ? {
@@ -485,12 +619,7 @@ export async function POST(request: Request) {
                     loaded_count: agent.hits.length,
                     next_offset: agent.nextOffset,
                     page_size: agent.pageSize,
-                    references: agent.hits.map((h) => ({
-                      slug: h.slug,
-                      paragraph_number: h.paragraph_number,
-                      title: h.title,
-                      date: h.date,
-                    })),
+                    references: listReferences,
                   },
                 },
               }
