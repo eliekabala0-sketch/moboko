@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Moboko">
+  <rect width="512" height="512" rx="112" fill="#080b12"/>
+  <path d="M128 364V148h54l74 122 74-122h54v216h-52V240l-58 96h-36l-58-96v124h-52z" fill="#e8ecf4"/>
+  <path d="M112 396h288" stroke="#c9a962" stroke-width="28" stroke-linecap="round"/>
+</svg>

@@ -16,6 +16,7 @@ const secondaryNav = [
   { href: "/testimonies", label: "Temoignages" },
   { href: "/support", label: "Soutien" },
   { href: "/billing", label: "Abonnement" },
+  { href: "/download", label: "Installer Moboko" },
 ];
 
 export async function Masthead() {
