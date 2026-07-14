@@ -70,6 +70,10 @@ export function ConcordanceHitsView({
   listId,
   continuationMessage,
 }: Props) {
+  void conversationIdProp;
+  void assistantMessageId;
+  void listId;
+
   const [open, setOpen] = useState<string | null>(null);
   const [items, setItems] = useState<ConcordanceHit[]>(hits);
   const [visible, setVisible] = useState(pageSize);
@@ -111,43 +115,17 @@ export function ConcordanceHitsView({
       return;
     }
 
-    const endpoint = lastMeta?._source === "chat" ? "/api/ai/chat" : "/api/ai/sermons-search";
-    const fromProp = typeof conversationIdProp === "string" ? conversationIdProp.trim() : "";
-    const fromHit =
-      typeof lastMeta?._conversation_id === "string" ? lastMeta._conversation_id.trim() : "";
-    const conversationIdForChat = fromProp || fromHit || null;
-    if (endpoint === "/api/ai/chat" && !conversationIdForChat) {
-      setVisible((v) => v + pageSize);
-      return;
-    }
+    const endpoint = "/api/ai/sermons-search";
 
     setLoadingMore(true);
     setLoadMoreError(null);
     try {
-      const payload: Record<string, unknown> =
-        endpoint === "/api/ai/chat"
-          ? {
-              mode: "concordance_page",
-              conversationId: conversationIdForChat,
-              query,
-              offset: nextOffset,
-              pageSize: serverPageSize,
-              listId,
-              assistantMessageId,
-            }
-          : {
-              query,
-              offset: nextOffset,
-              pageSize: serverPageSize,
-            };
-      let nextHits = await postConcordancePage(endpoint, payload);
-      if (!nextHits && endpoint === "/api/ai/chat") {
-        nextHits = await postConcordancePage("/api/ai/sermons-search", {
-          query,
-          offset: nextOffset,
-          pageSize: serverPageSize,
-        });
-      }
+      const payload: Record<string, unknown> = {
+        query,
+        offset: nextOffset,
+        pageSize: serverPageSize,
+      };
+      const nextHits = await postConcordancePage(endpoint, payload);
       if (!nextHits) {
         setLoadMoreError("Les résultats suivants n'ont pas pu être chargés. Réessayez.");
         return;
