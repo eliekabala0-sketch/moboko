@@ -598,6 +598,15 @@ export async function POST(request: Request) {
                 title: h.title,
                 date: h.date,
               }));
+        const listNextOffset =
+          listReferences.length > agent.hits.length ? agent.hits.length : agent.nextOffset;
+        const listHasMore = listReferences.length > agent.hits.length || agent.hasMore;
+        const displayResults = agent.hits.map((hit) => ({
+          ...hit,
+          _next_offset: listNextOffset,
+          _has_more: listHasMore,
+          _total_count: Math.max(agent.totalCount, listReferences.length),
+        }));
         const stateWithList =
           activeListId && agent.hits.length > 0
             ? {
@@ -615,9 +624,9 @@ export async function POST(request: Request) {
                     list_id: activeListId,
                     query: userContent,
                     scope: agent.scope,
-                    relevant_count: agent.totalCount,
+                    relevant_count: Math.max(agent.totalCount, listReferences.length),
                     loaded_count: agent.hits.length,
-                    next_offset: agent.nextOffset,
+                    next_offset: listNextOffset,
                     page_size: agent.pageSize,
                     references: listReferences,
                   },
@@ -631,12 +640,12 @@ export async function POST(request: Request) {
                 sermon_context_count: sermonContextCount,
                 moboko_kind: "sermon_concordance",
                 moboko_list_id: activeListId,
-                results: agent.hits,
-                total_count: agent.totalCount,
+                results: displayResults,
+                total_count: Math.max(agent.totalCount, listReferences.length),
                 offset: 0,
                 page_size: agent.pageSize,
-                has_more: agent.hasMore,
-                next_offset: agent.nextOffset,
+                has_more: listHasMore,
+                next_offset: listNextOffset,
                 ...(agent.relatedAxes.length > 0 ? { moboko_suggestions: agent.relatedAxes } : {}),
                 moboko_retrieval: {
                   list_id: activeListId,
@@ -644,9 +653,9 @@ export async function POST(request: Request) {
                   scope: agent.scope,
                   offset: 0,
                   page_size: agent.pageSize,
-                  total_count: agent.totalCount,
-                  has_more: agent.hasMore,
-                  next_offset: agent.nextOffset,
+                  total_count: Math.max(agent.totalCount, listReferences.length),
+                  has_more: listHasMore,
+                  next_offset: listNextOffset,
                 },
                 moboko_assistant_state: stateWithList,
                 moboko_openai_diagnostics: agent.diagnostics,
