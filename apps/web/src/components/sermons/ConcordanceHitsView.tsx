@@ -49,6 +49,19 @@ type Props = {
   continuationMessage?: string | null;
 };
 
+async function postConcordancePage(endpoint: string, payload: Record<string, unknown>) {
+  const res = await fetch(endpoint, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as Record<string, unknown>;
+  const nextHits = coerceConcordanceHits(data.results);
+  return nextHits.length > 0 ? nextHits : null;
+}
+
 export function ConcordanceHitsView({
   hits,
   pageSize = 20,
@@ -127,19 +140,15 @@ export function ConcordanceHitsView({
               offset: nextOffset,
               pageSize: serverPageSize,
             };
-      const res = await fetch(endpoint, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        setLoadMoreError("Les résultats suivants n'ont pas pu être chargés. Réessayez.");
-        return;
+      let nextHits = await postConcordancePage(endpoint, payload);
+      if (!nextHits && endpoint === "/api/ai/chat") {
+        nextHits = await postConcordancePage("/api/ai/sermons-search", {
+          query,
+          offset: nextOffset,
+          pageSize: serverPageSize,
+        });
       }
-      const data = (await res.json()) as Record<string, unknown>;
-      const nextHits = coerceConcordanceHits(data.results);
-      if (nextHits.length === 0) {
+      if (!nextHits) {
         setLoadMoreError("Les résultats suivants n'ont pas pu être chargés. Réessayez.");
         return;
       }
