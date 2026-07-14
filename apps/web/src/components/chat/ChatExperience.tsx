@@ -28,10 +28,17 @@ type ConversationListItem = {
 
 const CREDIT_EXHAUSTED_MESSAGE =
   "Vous n’avez plus de crédits pour utiliser l’Assistant. Rechargez votre solde pour continuer.";
+const CHAT_RETURN_CONVERSATION_KEY = "moboko.chat.returnConversationId";
 
-function creditsHref(conversationId: string | null) {
-  const suffix = conversationId ? `&conversationId=${encodeURIComponent(conversationId)}` : "";
-  return `/billing?tab=credits&from=chat${suffix}#credits`;
+function creditsHref() {
+  return "/billing?tab=credits&from=chat#credits";
+}
+
+function formatCreditLabel(wallet: { balance: number; isPremium: boolean; isFreeAccess: boolean }) {
+  if (wallet.isFreeAccess || wallet.isPremium) return "Accès offert";
+  if (wallet.balance <= 0) return "0 crédit";
+  if (wallet.balance <= 2) return `Plus que ${wallet.balance} crédit${wallet.balance > 1 ? "s" : ""}`;
+  return `Crédits : ${wallet.balance}`;
 }
 
 function updateChatUrl(conversationId: string | null) {
@@ -42,6 +49,16 @@ function updateChatUrl(conversationId: string | null) {
   url.searchParams.delete("payment");
   url.searchParams.delete("status");
   window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function rememberChatReturn(conversationId: string | null) {
+  if (typeof window === "undefined" || !conversationId) return;
+  window.localStorage.setItem(CHAT_RETURN_CONVERSATION_KEY, conversationId);
+}
+
+function readRememberedChatReturn() {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(CHAT_RETURN_CONVERSATION_KEY);
 }
 
 class CreditError extends Error {
@@ -211,6 +228,18 @@ export function ChatExperience({ userId, initialConversationId, paymentStatus }:
     (wallet?.balance ?? 0) > 0 &&
     (wallet?.balance ?? 0) <= Math.max(1, flags.textCreditCost * 2);
 
+  useEffect(() => {
+    if (!wallet || typeof document === "undefined") return;
+    const label = formatCreditLabel(wallet);
+    document.querySelectorAll("[data-moboko-credit-label]").forEach((node) => {
+      node.textContent = label;
+    });
+  }, [wallet]);
+
+  useEffect(() => {
+    rememberChatReturn(conversationId);
+  }, [conversationId]);
+
   const loadFlags = useCallback(async () => {
     const keys = [
       PUBLIC_APP_SETTING_KEYS.chatTextEnabled,
@@ -302,7 +331,7 @@ export function ChatExperience({ userId, initialConversationId, paymentStatus }:
         await loadFlags();
         await loadWallet();
         const rows = await loadConversations();
-        const requestedId = initialConversationId?.trim() || null;
+        const requestedId = initialConversationId?.trim() || readRememberedChatReturn();
         let cid =
           requestedId && rows.some((row) => row.id === requestedId)
             ? requestedId
@@ -659,7 +688,7 @@ export function ChatExperience({ userId, initialConversationId, paymentStatus }:
         </div>
         <div className="mt-4 space-y-2">
           {wallet ? <WalletBanner wallet={wallet} flags={flags} /> : null}
-          <Link href={creditsHref(conversationId)} className="block px-1 text-xs text-[var(--accent)] hover:underline">
+          <Link href={creditsHref()} className="block px-1 text-xs text-[var(--accent)] hover:underline">
             Acheter des crédits
           </Link>
         </div>
@@ -700,7 +729,7 @@ export function ChatExperience({ userId, initialConversationId, paymentStatus }:
             role="alert"
           >
             <span>{creditError}</span>{" "}
-            <Link href={creditsHref(conversationId)} className="font-semibold underline">
+            <Link href={creditsHref()} className="font-semibold underline">
               Acheter des crédits
             </Link>
           </div>
@@ -733,15 +762,16 @@ export function ChatExperience({ userId, initialConversationId, paymentStatus }:
             disabledReason={
               creditBlocked ? (
                 <div className="rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-soft)] px-3 py-2 text-xs leading-relaxed text-[var(--danger)]">
+                  <span className="font-semibold">Rechargez vos crédits pour continuer.</span>{" "}
                   <span>{CREDIT_EXHAUSTED_MESSAGE}</span>{" "}
-                  <Link href={creditsHref(conversationId)} className="font-semibold underline">
+                  <Link href={creditsHref()} className="font-semibold underline">
                     Acheter des crédits
                   </Link>
                 </div>
               ) : lowCredits ? (
                 <div className="rounded-xl border border-[var(--warning)]/30 bg-[var(--warning-soft)] px-3 py-2 text-xs leading-relaxed text-[var(--warning)]">
-                  Solde faible.{" "}
-                  <Link href={creditsHref(conversationId)} className="font-semibold underline">
+                  Plus que {wallet?.balance ?? 0} crédit{(wallet?.balance ?? 0) > 1 ? "s" : ""}.{" "}
+                  <Link href={creditsHref()} className="font-semibold underline">
                     Acheter des crédits
                   </Link>
                 </div>

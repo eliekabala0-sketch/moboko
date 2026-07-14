@@ -40,12 +40,12 @@ export async function Masthead() {
     }
   }
   const creditLabel = billingExempt
-    ? "Acces offert"
+    ? "Accès offert"
     : creditBalance === 0
-      ? "0 credit"
+      ? "0 crédit"
       : creditBalance !== null && creditBalance <= 2
-        ? `Plus que ${creditBalance} credit${creditBalance > 1 ? "s" : ""}`
-        : `Credits : ${creditBalance ?? 0}`;
+        ? `Plus que ${creditBalance} crédit${creditBalance > 1 ? "s" : ""}`
+        : `Crédits : ${creditBalance ?? 0}`;
 
   return (
     <header className="sticky top-0 z-50 border-b border-[var(--border)] bg-[var(--overlay)] backdrop-blur-xl">
@@ -96,6 +96,7 @@ export async function Masthead() {
             <>
               <Link
                 href="/billing"
+                data-moboko-credit-label
                 className="hidden text-[13px] font-semibold text-[var(--accent)] transition hover:underline sm:inline"
               >
                 {creditLabel}
@@ -105,6 +106,7 @@ export async function Masthead() {
               </span>
               <Link
                 href="/billing"
+                data-moboko-credit-label
                 className="inline text-[13px] font-semibold text-[var(--accent)] transition hover:underline sm:hidden"
               >
                 {creditLabel}
