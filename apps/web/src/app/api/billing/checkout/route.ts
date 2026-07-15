@@ -57,6 +57,7 @@ function parseCheckout(
   planId?: string | null;
   packId?: string | null;
   idempotencyKey?: string | null;
+  returnUrl?: string | null;
   payment: PaymentDetails;
 } | null {
   if (!raw || typeof raw !== "object") return null;
@@ -66,28 +67,31 @@ function parseCheckout(
     planId?: unknown;
     packId?: unknown;
     idempotencyKey?: unknown;
+    returnUrl?: unknown;
     payment?: unknown;
   };
   const payment = parsePaymentDetails(obj.payment);
   if (!payment) return null;
   const purpose = obj.purpose;
   const idempotencyKey = cleanText(obj.idempotencyKey, 80) || null;
+  const returnUrlRaw = cleanText(obj.returnUrl, 240);
+  const returnUrl = returnUrlRaw.startsWith("moboko://") ? returnUrlRaw : null;
   if (purpose === "subscription") {
     const planId = cleanText(obj.planId, 80);
     if (!planId) return null;
-    return { purpose, planId, idempotencyKey, payment };
+    return { purpose, planId, idempotencyKey, returnUrl, payment };
   }
   if (purpose === "credits") {
     const packId = cleanText(obj.packId, 80);
     if (!packId) return null;
-    return { purpose, packId, idempotencyKey, payment };
+    return { purpose, packId, idempotencyKey, returnUrl, payment };
   }
   if (purpose === "support_donation") {
     const amount = typeof obj.amount === "number" ? obj.amount : Number(obj.amount);
     if (!Number.isFinite(amount)) return null;
     const dollars = Math.floor(amount);
     if (dollars < 5 || dollars > 1999 || dollars !== amount) return null;
-    return { purpose, amount: dollars, idempotencyKey, payment };
+    return { purpose, amount: dollars, idempotencyKey, returnUrl, payment };
   }
   return null;
 }
@@ -105,6 +109,7 @@ export async function POST(request: Request) {
     planId?: string | null;
     packId?: string | null;
     idempotencyKey?: string | null;
+    returnUrl?: string | null;
     payment: PaymentDetails;
   } | null = null;
   try {
@@ -125,6 +130,8 @@ export async function POST(request: Request) {
     packId: parsed.packId,
     idempotencyKey: parsed.idempotencyKey,
     payment: parsed.payment,
+    successUrl: parsed.returnUrl ? `${parsed.returnUrl}?status=pending` : null,
+    cancelUrl: parsed.returnUrl ? `${parsed.returnUrl}?status=cancelled` : null,
     siteUrl: getSiteUrl(),
   });
   if (!checkout.ok) {

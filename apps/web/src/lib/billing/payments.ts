@@ -139,6 +139,8 @@ export async function createBillingCheckout(opts: {
   packId?: string | null;
   idempotencyKey?: string | null;
   payment: CheckoutPaymentDetails;
+  successUrl?: string | null;
+  cancelUrl?: string | null;
 }) {
   const offer = await resolveOffer({
     admin: opts.admin,
@@ -202,8 +204,8 @@ export async function createBillingCheckout(opts: {
     currency: offer.currency,
     planKey: offer.planKey,
     credits: offer.credits,
-    successUrl: `${opts.siteUrl}/${opts.purpose === "support_donation" ? "support" : "billing"}?status=pending`,
-    cancelUrl: `${opts.siteUrl}/${opts.purpose === "support_donation" ? "support" : "billing"}?status=cancelled`,
+    successUrl: opts.successUrl || `${opts.siteUrl}/${opts.purpose === "support_donation" ? "support" : "billing"}?status=pending`,
+    cancelUrl: opts.cancelUrl || `${opts.siteUrl}/${opts.purpose === "support_donation" ? "support" : "billing"}?status=cancelled`,
   });
 
   if (!checkout.ok) {
