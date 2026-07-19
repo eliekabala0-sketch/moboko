@@ -1,5 +1,6 @@
 import { Masthead } from "@/components/layout/Masthead";
 import { BillingCheckoutButtons } from "@/components/billing/BillingCheckoutButtons";
+import { PaymentPendingStatus } from "@/components/billing/PaymentPendingStatus";
 import { TransactionHistory } from "@/components/billing/TransactionHistory";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import Link from "next/link";
@@ -137,11 +138,7 @@ export default async function BillingPage({ searchParams }: PageProps) {
             Paiement confirmé avec succès.
           </p>
         ) : null}
-        {sp.status === "pending" ? (
-          <p className="moboko-card mt-6 border-[var(--success)]/30 bg-[var(--success-soft)] p-4 text-sm text-[var(--success)]">
-            La demande de paiement a été envoyée. Confirmez-la sur votre téléphone.
-          </p>
-        ) : null}
+        <PaymentPendingStatus active={sp.status === "pending"} />
         {sp.status === "cancelled" ? (
           <p className="moboko-card mt-6 border-[var(--warning)]/30 bg-[var(--warning-soft)] p-4 text-sm text-[var(--foreground)]">
             Le paiement a été annulé ou refusé. Aucun montant n&apos;a été débité par Moboko.

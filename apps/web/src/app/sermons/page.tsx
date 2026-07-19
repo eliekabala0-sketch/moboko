@@ -23,7 +23,7 @@ export const metadata = {
 };
 
 type PageProps = {
-  searchParams: Promise<{ st?: string; sy?: string; sl?: string; pq?: string }>;
+  searchParams: Promise<{ st?: string; sy?: string; sl?: string; pq?: string; ss?: string }>;
 };
 
 export default async function SermonsPage({ searchParams }: PageProps) {
@@ -32,6 +32,7 @@ export default async function SermonsPage({ searchParams }: PageProps) {
   const sy = sp.sy?.trim() ?? "";
   const sl = sp.sl?.trim() ?? "";
   const pq = sp.pq?.trim() ?? "";
+  const ss = sp.ss?.trim() ?? "recent";
 
   const pub = await fetchPublicAppSettings();
   const supabase = await createSupabaseServerClient();
@@ -63,10 +64,17 @@ export default async function SermonsPage({ searchParams }: PageProps) {
       sermonQuery = sermonQuery.ilike("location", `%${slSafe}%`);
     }
 
-    const { data: sermonData } = await sermonQuery
-      .order("preached_on", { ascending: false })
-      .order("title", { ascending: true })
-      .limit(400);
+    if (ss === "az") {
+      sermonQuery = sermonQuery.order("title", { ascending: true });
+    } else if (ss === "za") {
+      sermonQuery = sermonQuery.order("title", { ascending: false });
+    } else if (ss === "oldest") {
+      sermonQuery = sermonQuery.order("preached_on", { ascending: true }).order("title", { ascending: true });
+    } else {
+      sermonQuery = sermonQuery.order("preached_on", { ascending: false }).order("title", { ascending: true });
+    }
+
+    const { data: sermonData } = await sermonQuery.limit(400);
 
     rows = (sermonData ?? []) as SermonListRow[];
 
@@ -214,7 +222,7 @@ export default async function SermonsPage({ searchParams }: PageProps) {
           pour les questions en langage naturel.
         </p>
 
-        <SermonLibrarySearchForm st={st} sy={sy} sl={sl} pq={pq} />
+        <SermonLibrarySearchForm st={st} sy={sy} sl={sl} pq={pq} ss={ss} />
 
         <div id="recherche-ia" className="scroll-mt-28">
           <SermonAiSearchPanel enabled={pub.sermonAiSearchEnabled} creditCost={pub.sermonAiSearchCreditCost} />

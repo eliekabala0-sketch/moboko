@@ -1,5 +1,6 @@
 import {
   getChatModel,
+  getMobokoSystemPrompt,
   getOpenAIClient,
   historyToOpenAIMessages,
   runChatCompletion,
@@ -104,6 +105,55 @@ function pathBelongsToUser(path: string, userId: string) {
 }
 
 const EMPTY_CONCORDANCE_MESSAGE = "Aucun passage suffisamment précis n'a été trouvé pour cette formulation.";
+const BIBLE_INTENT_WORDS = ["bible", "verset", "versets", "ecriture", "ecritures", "scripture", "scriptures"];
+const SERMON_INTENT_WORDS = ["prophete", "proph�te", "branham", "message", "messages", "sermon", "sermons", "citation", "citations"];
+
+function normalizeIntent(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+function wantsBibleOnly(value: string) {
+  const text = normalizeIntent(value);
+  if (text.includes("bible uniquement") || text.includes("versets uniquement")) return true;
+  if (text.includes("que dit la bible") || text.includes("selon la bible")) return true;
+  const bible = BIBLE_INTENT_WORDS.some((word) => text.includes(word));
+  const sermon = SERMON_INTENT_WORDS.some((word) => text.includes(word));
+  return bible && !sermon;
+}
+
+function bibleSearchTerms(value: string) {
+  return normalizeIntent(value)
+    .replace(/\b(que|dit|la|le|les|des|du|de|dans|sur|selon|bible|versets?|ecritures?|uniquement|cherche|chercher|passages?|concernant)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 3)
+    .slice(0, 6);
+}
+
+async function fetchBibleContext(admin: NonNullable<ReturnType<typeof createSupabaseServiceClient>>, query: string) {
+  const terms = bibleSearchTerms(query);
+  const first = terms[0] ?? normalizeIntent(query).slice(0, 40);
+  if (!first || first.length < 2) return [];
+  const clauses = ["text.ilike.%" + first + "%"];
+  if (terms[1]) clauses.push("text.ilike.%" + terms[1] + "%");
+  const { data } = await admin
+    .from("bible_passages")
+    .select("translation, book, chapter, verse, text, book_number")
+    .eq("translation", "LSG1910")
+    .or(clauses.join(","))
+    .order("book_number", { ascending: true })
+    .order("chapter", { ascending: true })
+    .order("verse", { ascending: true })
+    .limit(80);
+  const normTerms = terms.length > 0 ? terms : [first];
+  return ((data ?? []) as Array<{ translation: string; book: string; chapter: number; verse: number; text: string }>)
+    .filter((row) => {
+      const text = normalizeIntent(row.text);
+      return normTerms.some((term) => text.includes(term));
+    })
+    .slice(0, 8);
+}
 
 function coerceStoredRefs(value: unknown) {
   if (!Array.isArray(value)) return [];
@@ -577,6 +627,30 @@ export async function POST(request: Request) {
       console.log("[moboko-openai] api_key_present=true");
       console.log("[moboko-openai] model=" + getChatModel());
       try {
+        if (wantsBibleOnly(userContent)) {
+          const bibleHits = await fetchBibleContext(admin, userContent);
+          const bibleContext = bibleHits.map((hit) => `${hit.book} ${hit.chapter}:${hit.verse} - ${hit.text}`).join("\n");
+          const bibleMessages: ChatCompletionMessageParam[] = [
+            { role: "system", content: getMobokoSystemPrompt() },
+            {
+              role: "user",
+              content:
+                bibleHits.length > 0
+                  ? `Question: ${userContent}\n\nReponds uniquement avec la Bible. Cite les references exactes ci-dessous, sans inventer d'autres versets.\n\n${bibleContext}`
+                  : `Question: ${userContent}\n\nL'utilisateur demande la Bible, mais aucun verset exact n'a ete retrouve dans la bibliotheque locale. Dis-le simplement et propose de reformuler.`,
+            },
+          ];
+          assistantText = await runChatCompletion(openai, bibleMessages);
+          metaAssistant = {
+            model: getChatModel(),
+            sermon_context_count: 0,
+            moboko_kind: "bible_context",
+            bible_context_count: bibleHits.length,
+            bible_sources: bibleHits.map((hit) => ({ translation: hit.translation, book: hit.book, chapter: hit.chapter, verse: hit.verse })),
+            moboko_tool: "bible_context_rehydrated",
+          };
+          assistantState = { ...assistantState, last_source: "bible", updated_at: new Date().toISOString() };
+        } else {
         const agent = await runOpenAiSermonAgent({
           openai,
           admin,
@@ -692,6 +766,7 @@ export async function POST(request: Request) {
         console.log("[moboko-openai] failure_reason=" + agent.diagnostics.failure_reason);
         if (debugEnabled) {
           mobokoDebugChatOpenAi = agent.diagnostics as unknown as Record<string, unknown>;
+        }
         }
       } catch (e) {
         console.error("[moboko-openai] failure_reason=assistant_unavailable", e instanceof Error ? e.message : String(e));

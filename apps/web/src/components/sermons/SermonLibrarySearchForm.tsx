@@ -1,3 +1,4 @@
+import { SermonTitleAutocomplete } from "@/components/sermons/SermonTitleAutocomplete";
 import Link from "next/link";
 
 type Props = {
@@ -5,9 +6,10 @@ type Props = {
   sy: string;
   sl: string;
   pq: string;
+  ss?: string;
 };
 
-export function SermonLibrarySearchForm({ st, sy, sl, pq }: Props) {
+export function SermonLibrarySearchForm({ st, sy, sl, pq, ss = "recent" }: Props) {
   return (
     <form
       id="filtres-sermons"
@@ -19,17 +21,10 @@ export function SermonLibrarySearchForm({ st, sy, sl, pq }: Props) {
         <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--accent)]">
           Filtrer les sermons
         </p>
-        <div className="mt-4 grid gap-4 sm:grid-cols-3">
+        <div className="mt-4 grid gap-4 sm:grid-cols-4">
           <label className="block text-sm font-medium text-[var(--foreground)]">
             <span className="text-[var(--muted)]">Titre contient</span>
-            <input
-              name="st"
-              type="search"
-              defaultValue={st}
-              placeholder="Ex. guérison"
-              className="moboko-input mt-2"
-              autoComplete="off"
-            />
+            <SermonTitleAutocomplete defaultValue={st} year={sy} location={sl} />
           </label>
           <label className="block text-sm font-medium text-[var(--foreground)]">
             <span className="text-[var(--muted)]">Année</span>
@@ -54,6 +49,15 @@ export function SermonLibrarySearchForm({ st, sy, sl, pq }: Props) {
               className="moboko-input mt-2"
               autoComplete="off"
             />
+          </label>
+          <label className="block text-sm font-medium text-[var(--foreground)]">
+            <span className="text-[var(--muted)]">Classement</span>
+            <select name="ss" defaultValue={ss} className="moboko-input mt-2">
+              <option value="recent">Plus recent</option>
+              <option value="oldest">Plus ancien</option>
+              <option value="az">A vers Z</option>
+              <option value="za">Z vers A</option>
+            </select>
           </label>
         </div>
       </div>

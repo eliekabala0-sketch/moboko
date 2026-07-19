@@ -1,3 +1,4 @@
+import { BibleQuickSearch } from "@/components/bible/BibleQuickSearch";
 import { Masthead } from "@/components/layout/Masthead";
 import { parsePositiveInt, sanitizeLike, significantTerms } from "@/lib/library/format";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -231,10 +232,7 @@ export default async function BiblePage({ searchParams }: Props) {
               ))}
             </select>
           </label>
-          <label className="text-sm font-medium text-[var(--foreground)]">
-            Reference ou recherche
-            <input name="q" defaultValue={q} className="moboko-input mt-2" placeholder="Jean 3:16, Psaume 23, amour..." />
-          </label>
+          <BibleQuickSearch version={selectedVersion} book={currentBook} defaultQuery={q} />
           <button className="moboko-btn-primary self-end px-5 py-3 text-sm">Ouvrir</button>
         </form>
 
