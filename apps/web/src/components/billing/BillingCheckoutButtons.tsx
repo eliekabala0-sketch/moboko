@@ -4,8 +4,11 @@ import { useState } from "react";
 import {
   CheckoutPaymentFields,
   DEFAULT_PAYMENT_DETAILS,
-  MOBILE_MONEY_OPERATORS,
+  operatorLabel,
+  paymentPayload,
+  paymentPhoneLabel,
   type CheckoutPaymentDetails,
+  type CheckoutProfile,
 } from "@/components/billing/CheckoutPaymentFields";
 
 type Purpose = "subscription" | "credits";
@@ -36,13 +39,13 @@ export type BillingCreditPackChoice = {
 };
 
 const PURPOSE_LABEL: Record<Purpose, string> = {
-  subscription: "Souscription",
-  credits: "Credits IA",
+  subscription: "Abonnement",
+  credits: "Achat de credits",
 };
 
 async function startCheckout(args: {
   purpose: Purpose;
-  payment: CheckoutPaymentDetails;
+  payment: { operator: string; customerPhone: string };
   planId?: string | null;
   packId?: string | null;
   idempotencyKey: string;
@@ -69,11 +72,13 @@ export function BillingCheckoutButtons({
   mode = "all",
   plans = [],
   packs = [],
+  profile = null,
 }: {
   disabled: boolean;
   mode?: "all" | Purpose;
   plans?: BillingPlanChoice[];
   packs?: BillingCreditPackChoice[];
+  profile?: CheckoutProfile | null;
 }) {
   const [busy, setBusy] = useState<Purpose | null>(null);
   const [selected, setSelected] = useState<Purpose | null>(mode === "all" ? null : mode);
@@ -83,6 +88,12 @@ export function BillingCheckoutButtons({
   const [error, setError] = useState<string | null>(null);
   const selectedPlan = plans.find((plan) => plan.id === planId) ?? null;
   const selectedPack = packs.find((pack) => pack.id === packId) ?? null;
+  const offerLabel =
+    selected === "subscription" && selectedPlan
+      ? selectedPlan.name
+      : selected === "credits" && selectedPack
+        ? selectedPack.name
+        : "Offre a choisir";
   const selectedAmount =
     selected === "subscription" && selectedPlan
       ? `${selectedPlan.price} ${selectedPlan.currency}`
@@ -104,13 +115,18 @@ export function BillingCheckoutButtons({
       setError("Aucun pack n'est disponible pour le moment.");
       return;
     }
+    const payload = paymentPayload(payment, profile);
+    if (!payload.customerPhone) {
+      setError("Indiquez un numero Mobile Money pour lancer le paiement.");
+      return;
+    }
     if (disabled || busy) return;
     setError(null);
     setBusy(purpose);
     try {
       await startCheckout({
         purpose,
-        payment,
+        payment: payload,
         planId: purpose === "subscription" ? planId : null,
         packId: purpose === "credits" ? packId : null,
         idempotencyKey: crypto.randomUUID(),
@@ -197,15 +213,14 @@ export function BillingCheckoutButtons({
               ))}
             </div>
           ) : null}
-          <CheckoutPaymentFields value={payment} onChange={setPayment} disabled={disabled || busy !== null} />
+          <CheckoutPaymentFields value={payment} onChange={setPayment} profile={profile} disabled={disabled || busy !== null} />
           <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--foreground)]">
             <p className="font-semibold">Resume</p>
-            <p className="mt-1 text-[var(--muted)]">
-              {PURPOSE_LABEL[selected]} par{" "}
-              {MOBILE_MONEY_OPERATORS.find((operator) => operator.value === payment.operator)?.label ?? "Mobile Money"}
-              {payment.customerPhone ? ` - ${payment.customerPhone}` : ""}
-              {selectedAmount ? ` - ${selectedAmount}` : ""}
-            </p>
+            <p className="mt-2 text-[var(--muted)]">Offre : <span className="text-[var(--foreground)]">{offerLabel}</span></p>
+            <p className="mt-1 text-[var(--muted)]">Montant : <span className="text-[var(--foreground)]">{selectedAmount}</span></p>
+            <p className="mt-1 text-[var(--muted)]">Operateur : <span className="text-[var(--foreground)]">{operatorLabel(payment.operator)}</span></p>
+            <p className="mt-1 text-[var(--muted)]">Numero : <span className="text-[var(--foreground)] tabular-nums">{paymentPhoneLabel(payment, profile)}</span></p>
+            <p className="mt-2 text-xs text-[var(--muted)]">{PURPOSE_LABEL[selected]} confirme cote serveur apres validation Mobile Money.</p>
           </div>
           <button
             type="button"
@@ -213,7 +228,7 @@ export function BillingCheckoutButtons({
             onClick={() => void run()}
             className="moboko-btn-primary px-6 py-3 text-sm disabled:opacity-45"
           >
-            {busy ? "Preparation..." : "Confirmer et payer"}
+            {busy ? "Preparation..." : "Confirmer le paiement"}
           </button>
         </div>
       ) : null}

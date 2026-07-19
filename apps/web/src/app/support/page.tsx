@@ -30,6 +30,24 @@ export default async function SupportPage({
 }) {
   const sp = await searchParams;
   const settings = await fetchPublicAppSettings();
+  const supabase = await createSupabaseServerClient();
+  let profile: { fullName: string | null; email: string | null; phone: string | null; city: string | null } | null = null;
+  if (supabase) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("full_name, phone, city")
+        .eq("id", user.id)
+        .maybeSingle();
+      profile = {
+        fullName: typeof prof?.full_name === "string" ? prof.full_name : null,
+        email: user.email ?? null,
+        phone: typeof prof?.phone === "string" ? prof.phone : null,
+        city: typeof prof?.city === "string" ? prof.city : null,
+      };
+    }
+  }
   const amounts = settings.supportSuggestedAmounts
     .split(",")
     .map((x) => x.trim())
@@ -126,6 +144,7 @@ export default async function SupportPage({
             allowOther={settings.supportOtherAmountEnabled}
             minAmount={settings.supportMinAmount}
             maxAmount={settings.supportMaxAmount}
+            profile={profile}
           />
         ) : null}
 

@@ -6,6 +6,11 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
+type PaymentInput = {
+  operator: string;
+  customerPhone: string | null;
+};
+
 type PaymentDetails = {
   customerName: string;
   customerEmail: string;
@@ -29,24 +34,60 @@ function normalizePhone(value: unknown) {
   return normalized;
 }
 
-function parsePaymentDetails(raw: unknown): PaymentDetails | null {
+function parsePaymentInput(raw: unknown): PaymentInput | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as Record<string, unknown>;
-  const details = {
-    customerName: cleanText(obj.customerName, 100),
-    customerEmail: cleanText(obj.customerEmail, 160).toLowerCase(),
-    customerPhone: normalizePhone(obj.customerPhone),
-    address: cleanText(obj.address, 200),
-    city: cleanText(obj.city, 80),
-    country: cleanText(obj.country, 80),
-    operator: cleanText(obj.operator, 40),
+  const operator = cleanText(obj.operator, 40);
+  if (!allowedOperators.has(operator)) return null;
+  return {
+    operator,
+    customerPhone: normalizePhone(obj.customerPhone) || null,
   };
-  if (!details.customerName || details.customerName.length < 2) return null;
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(details.customerEmail)) return null;
-  if (!details.customerPhone) return null;
-  if (!details.address || !details.city || !details.country) return null;
-  if (!allowedOperators.has(details.operator)) return null;
-  return details;
+}
+
+function usableEmail(value: string | null | undefined) {
+  const email = cleanText(value, 160).toLowerCase();
+  if (!email || email.includes("@phone.moboko.local")) return "";
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? email : "";
+}
+
+function displayNameFromEmail(email: string) {
+  const at = email.indexOf("@");
+  return at > 0 ? email.slice(0, at) : email;
+}
+
+async function paymentDetailsFromProfile(opts: {
+  admin: NonNullable<ReturnType<typeof createSupabaseServiceClient>>;
+  userId: string;
+  userEmail: string | null | undefined;
+  userPhone: string | null | undefined;
+  input: PaymentInput;
+}): Promise<PaymentDetails | null> {
+  const { data: profile } = await opts.admin
+    .from("profiles")
+    .select("full_name, display_name, city, phone")
+    .eq("id", opts.userId)
+    .maybeSingle();
+
+  const email = usableEmail(opts.userEmail);
+  const customerName =
+    cleanText(profile?.full_name, 100) ||
+    cleanText(profile?.display_name, 100) ||
+    (email ? displayNameFromEmail(email) : "Utilisateur Moboko");
+  const profilePhone = normalizePhone(profile?.phone);
+  const authPhone = normalizePhone(opts.userPhone);
+  const customerPhone = opts.input.customerPhone || profilePhone || authPhone;
+  if (!customerPhone) return null;
+
+  return {
+    customerName,
+    customerEmail: email,
+    customerPhone,
+    address: "Profil Moboko",
+    city: cleanText(profile?.city, 80) || "Kinshasa",
+    country: "RDC",
+    operator: opts.input.operator,
+  };
 }
 
 function parseCheckout(
@@ -58,7 +99,7 @@ function parseCheckout(
   packId?: string | null;
   idempotencyKey?: string | null;
   returnUrl?: string | null;
-  payment: PaymentDetails;
+  payment: PaymentInput;
 } | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as {
@@ -70,7 +111,7 @@ function parseCheckout(
     returnUrl?: unknown;
     payment?: unknown;
   };
-  const payment = parsePaymentDetails(obj.payment);
+  const payment = parsePaymentInput(obj.payment);
   if (!payment) return null;
   const purpose = obj.purpose;
   const idempotencyKey = cleanText(obj.idempotencyKey, 80) || null;
@@ -110,7 +151,7 @@ export async function POST(request: Request) {
     packId?: string | null;
     idempotencyKey?: string | null;
     returnUrl?: string | null;
-    payment: PaymentDetails;
+    payment: PaymentInput;
   } | null = null;
   try {
     parsed = parseCheckout(await request.json());
@@ -118,6 +159,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "json_invalide" }, { status: 400 });
   }
   if (!parsed) return NextResponse.json({ error: "purpose_invalide" }, { status: 400 });
+
+  const payment = await paymentDetailsFromProfile({
+    admin,
+    userId: user.id,
+    userEmail: user.email ?? null,
+    userPhone: user.phone ?? null,
+    input: parsed.payment,
+  });
+  if (!payment) {
+    return NextResponse.json(
+      { error: "numero_paiement_requis", message: "Ajoutez un numero Mobile Money dans votre profil ou indiquez un autre numero." },
+      { status: 400 },
+    );
+  }
 
   const checkout = await createBillingCheckout({
     admin,
@@ -129,7 +184,7 @@ export async function POST(request: Request) {
     planId: parsed.planId,
     packId: parsed.packId,
     idempotencyKey: parsed.idempotencyKey,
-    payment: parsed.payment,
+    payment,
     successUrl: parsed.returnUrl ? `${parsed.returnUrl}?status=pending` : null,
     cancelUrl: parsed.returnUrl ? `${parsed.returnUrl}?status=cancelled` : null,
     siteUrl: getSiteUrl(),

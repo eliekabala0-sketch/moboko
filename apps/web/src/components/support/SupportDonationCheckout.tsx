@@ -4,8 +4,11 @@ import { useMemo, useState } from "react";
 import {
   CheckoutPaymentFields,
   DEFAULT_PAYMENT_DETAILS,
-  MOBILE_MONEY_OPERATORS,
+  operatorLabel,
+  paymentPayload,
+  paymentPhoneLabel,
   type CheckoutPaymentDetails,
+  type CheckoutProfile,
 } from "@/components/billing/CheckoutPaymentFields";
 
 function parseAmount(raw: string) {
@@ -13,7 +16,7 @@ function parseAmount(raw: string) {
   return Number.isFinite(n) ? n : 0;
 }
 
-async function startSupportCheckout(amount: number, payment: CheckoutPaymentDetails) {
+async function startSupportCheckout(amount: number, payment: { operator: string; customerPhone: string }) {
   const res = await fetch("/api/billing/checkout", {
     method: "POST",
     credentials: "include",
@@ -32,11 +35,13 @@ export function SupportDonationCheckout({
   allowOther = true,
   minAmount = 5,
   maxAmount = 1999,
+  profile = null,
 }: {
   amounts: string[];
   allowOther?: boolean;
   minAmount?: number;
   maxAmount?: number;
+  profile?: CheckoutProfile | null;
 }) {
   const normalized = useMemo(
     () =>
@@ -55,6 +60,7 @@ export function SupportDonationCheckout({
 
   const chosen = otherOpen ? parseAmount(other) : selected;
   const valid = chosen != null && chosen >= minAmount && chosen <= maxAmount;
+  const phone = paymentPhoneLabel(payment, profile);
 
   async function pay() {
     if (busy) return;
@@ -63,9 +69,14 @@ export function SupportDonationCheckout({
       setError(`Choisissez un montant entre ${minAmount} $ et ${maxAmount} $.`);
       return;
     }
+    const payload = paymentPayload(payment, profile);
+    if (!payload.customerPhone) {
+      setError("Indiquez un numero Mobile Money pour lancer le paiement.");
+      return;
+    }
     setBusy(true);
     try {
-      await startSupportCheckout(chosen, payment);
+      await startSupportCheckout(chosen, payload);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Paiement indisponible.");
       setBusy(false);
@@ -135,15 +146,14 @@ export function SupportDonationCheckout({
       ) : null}
 
       <div className="mt-4 space-y-4">
-        <CheckoutPaymentFields value={payment} onChange={setPayment} disabled={busy} />
+        <CheckoutPaymentFields value={payment} onChange={setPayment} profile={profile} disabled={busy} />
         {valid && chosen ? (
           <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] px-4 py-3 text-sm text-[var(--foreground)]">
             <p className="font-semibold">Resume</p>
-            <p className="mt-1 text-[var(--muted)]">
-              Don de {chosen} $ par{" "}
-              {MOBILE_MONEY_OPERATORS.find((operator) => operator.value === payment.operator)?.label ?? "Mobile Money"}
-              {payment.customerPhone ? ` - ${payment.customerPhone}` : ""}
-            </p>
+            <p className="mt-2 text-[var(--muted)]">Offre : <span className="text-[var(--foreground)]">Soutien Moboko</span></p>
+            <p className="mt-1 text-[var(--muted)]">Montant : <span className="text-[var(--foreground)]">{chosen} USD</span></p>
+            <p className="mt-1 text-[var(--muted)]">Operateur : <span className="text-[var(--foreground)]">{operatorLabel(payment.operator)}</span></p>
+            <p className="mt-1 text-[var(--muted)]">Numero : <span className="text-[var(--foreground)] tabular-nums">{phone}</span></p>
           </div>
         ) : null}
         <button
@@ -152,7 +162,7 @@ export function SupportDonationCheckout({
           onClick={() => void pay()}
           className="moboko-btn-primary px-6 py-3 text-sm disabled:opacity-45"
         >
-          {busy ? "Preparation..." : `Faire un don${valid && chosen ? ` de ${chosen} $` : ""}`}
+          {busy ? "Preparation..." : "Confirmer le paiement"}
         </button>
       </div>
 

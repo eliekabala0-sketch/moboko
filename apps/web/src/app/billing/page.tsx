@@ -44,6 +44,7 @@ export default async function BillingPage({ searchParams }: PageProps) {
     currency: string;
     is_featured: boolean;
   }[] = [];
+  let profile: { fullName: string | null; email: string | null; phone: string | null; city: string | null } | null = null;
   let transactions: {
     id: string;
     purpose: string | null;
@@ -80,12 +81,18 @@ export default async function BillingPage({ searchParams }: PageProps) {
       isLoggedIn = true;
       const { data: prof } = await supabase
         .from("profiles")
-        .select("credit_balance, is_premium, is_free_access")
+.select("credit_balance, is_premium, is_free_access, full_name, phone, city")
         .eq("id", user.id)
         .maybeSingle();
       if (prof) {
         balance = typeof prof.credit_balance === "number" ? prof.credit_balance : 0;
         billingExempt = Boolean(prof.is_premium || prof.is_free_access);
+        profile = {
+          fullName: typeof prof.full_name === "string" ? prof.full_name : null,
+          email: user.email ?? null,
+          phone: typeof prof.phone === "string" ? prof.phone : null,
+          city: typeof prof.city === "string" ? prof.city : null,
+        };
       }
       const { data: txs } = await supabase
         .from("payment_transactions")
@@ -184,7 +191,7 @@ export default async function BillingPage({ searchParams }: PageProps) {
             Rechargement séparé de l’abonnement. Les crédits sont ajoutés seulement après confirmation du paiement.
           </p>
           <div className="mt-5 flex flex-wrap gap-3">
-            <BillingCheckoutButtons disabled={!isLoggedIn} mode="credits" packs={packs} />
+            <BillingCheckoutButtons disabled={!isLoggedIn} mode="credits" packs={packs} profile={profile} />
           </div>
         </section>
 
@@ -199,7 +206,7 @@ export default async function BillingPage({ searchParams }: PageProps) {
             <li>Crédits IA séparés, sauf crédits mensuels offerts par configuration admin.</li>
           </ul>
           <div className="mt-5 flex flex-wrap gap-3">
-            <BillingCheckoutButtons disabled={!isLoggedIn} mode="subscription" plans={plans} />
+            <BillingCheckoutButtons disabled={!isLoggedIn} mode="subscription" plans={plans} profile={profile} />
           </div>
         </section>
         {isLoggedIn && transactions.length > 0 ? (
