@@ -11,6 +11,7 @@ type Offer =
   | { kind: "subscription"; idOrAmount: string; label: string; amount: string }
   | { kind: "credits"; idOrAmount: string; label: string; amount: string }
   | { kind: "support_donation"; idOrAmount: number; label: string; amount: string };
+type PaymentStatus = { ok: true; status: "none" | "pending" | "success" | "refused" | "expired" | "error"; message?: string };
 
 const operators = [
   { value: "airtel_money", label: "Airtel Money" },
@@ -34,12 +35,47 @@ export function BillingScreen({ userId }: { userId: string }) {
   const [supportAmount, setSupportAmount] = useState("10");
   const [pendingOffer, setPendingOffer] = useState<Offer | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [statusKey, setStatusKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     void load();
   }, [userId]);
+
+  useEffect(() => {
+    if (!statusKey) return;
+    let cancelled = false;
+    let attempts = 0;
+    const timer = setInterval(() => {
+      attempts += 1;
+      void apiJson<PaymentStatus>(`/api/billing/status?idempotencyKey=${encodeURIComponent(statusKey)}`)
+        .then((res) => {
+          if (cancelled) return;
+          if (res.status === "success") {
+            setMessage(res.message ?? "Paiement confirme.");
+            setStatusKey(null);
+            void load();
+          } else if (res.status === "refused" || res.status === "expired" || res.status === "error") {
+            setError(res.message ?? "Le paiement n'a pas abouti.");
+            setStatusKey(null);
+          } else {
+            setMessage(res.message ?? "Veuillez valider la transaction sur votre telephone.");
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setMessage("Paiement lance. Verification en cours...");
+        });
+      if (attempts >= 24) {
+        setMessage("Paiement lance. Vous pouvez revenir ici apres validation.");
+        setStatusKey(null);
+      }
+    }, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [statusKey]);
 
   async function load() {
     const [{ data: profile }, { data: planRows }, { data: packRows }] = await Promise.all([
@@ -71,17 +107,19 @@ export function BillingScreen({ userId }: { userId: string }) {
     setMessage(null);
     try {
       const payment = { operator, customerPhone: phone };
+      const idempotencyKey = `${pendingOffer.kind}-${pendingOffer.idOrAmount}-${Date.now()}`;
       const body =
         pendingOffer.kind === "subscription"
-          ? { purpose: pendingOffer.kind, planId: pendingOffer.idOrAmount, payment, returnUrl: "moboko://billing", idempotencyKey: `${pendingOffer.kind}-${pendingOffer.idOrAmount}-${Date.now()}` }
+          ? { purpose: pendingOffer.kind, planId: pendingOffer.idOrAmount, payment, returnUrl: "moboko://billing", idempotencyKey }
           : pendingOffer.kind === "credits"
-            ? { purpose: pendingOffer.kind, packId: pendingOffer.idOrAmount, payment, returnUrl: "moboko://billing", idempotencyKey: `${pendingOffer.kind}-${pendingOffer.idOrAmount}-${Date.now()}` }
-            : { purpose: pendingOffer.kind, amount: Number(pendingOffer.idOrAmount), payment, returnUrl: "moboko://billing", idempotencyKey: `${pendingOffer.kind}-${pendingOffer.idOrAmount}-${Date.now()}` };
+            ? { purpose: pendingOffer.kind, packId: pendingOffer.idOrAmount, payment, returnUrl: "moboko://billing", idempotencyKey }
+            : { purpose: pendingOffer.kind, amount: Number(pendingOffer.idOrAmount), payment, returnUrl: "moboko://billing", idempotencyKey };
       const res = await apiJson<{ ok: true; checkout_url: string }>("/api/billing/checkout", {
         method: "POST",
         body: JSON.stringify(body),
       });
       setMessage("Demande envoyee. Confirmez le paiement sur votre telephone.");
+      setStatusKey(idempotencyKey);
       await Linking.openURL(res.checkout_url);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Paiement indisponible");

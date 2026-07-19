@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, FlatList, Text } from "react-native";
 import { Button, Card, Field, Notice, Screen, textStyles } from "../components/ui";
+import { publicApiJson } from "../lib/api";
 import { supabase } from "../lib/supabase";
 
 type Verse = { id?: string; translation: string; book: string; chapter: number; verse: number; text: string };
+type BibleSearchResponse = { ok: true; results: Verse[] };
 
 export function BibleScreen() {
   const [book, setBook] = useState("Jean");
@@ -44,16 +46,9 @@ export function BibleScreen() {
     setBusy(true);
     setError(null);
     try {
-      const { data, error: e } = await supabase
-        .from("bible_passages")
-        .select("id, translation, book, chapter, verse, text")
-        .ilike("text", `%${term}%`)
-        .order("book_number", { ascending: true })
-        .order("chapter", { ascending: true })
-        .order("verse", { ascending: true })
-        .limit(80);
-      if (e) throw e;
-      setVerses((data ?? []) as Verse[]);
+      const params = new URLSearchParams({ q: term, book: book.trim(), limit: "50" });
+      const res = await publicApiJson<BibleSearchResponse>(`/api/bible/search?${params.toString()}`);
+      setVerses(res.results);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Recherche impossible");
     } finally {

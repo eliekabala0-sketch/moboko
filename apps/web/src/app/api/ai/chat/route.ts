@@ -121,6 +121,25 @@ function wantsBibleOnly(value: string) {
   return bible && !sermon;
 }
 
+function wantsMessagesOnly(value: string) {
+  const text = normalizeIntent(value);
+  if (text.includes("messages uniquement") || text.includes("citations uniquement")) return true;
+  if (text.includes("sans la bible") || text.includes("pas de verset")) return true;
+  const bible = BIBLE_INTENT_WORDS.some((word) => text.includes(word));
+  const sermon = SERMON_INTENT_WORDS.some((word) => text.includes(word));
+  return sermon && !bible;
+}
+
+function wantsBibleAndMessages(value: string) {
+  const text = normalizeIntent(value);
+  if (wantsBibleOnly(value) || wantsMessagesOnly(value)) return false;
+  if (text.includes("bible et messages") || text.includes("bible et les messages")) return true;
+  if (text.includes("passages bibliques") && SERMON_INTENT_WORDS.some((word) => text.includes(word))) return true;
+  if (text.includes("donne moi aussi") && BIBLE_INTENT_WORDS.some((word) => text.includes(word))) return true;
+  const broadTopics = ["nouvelle naissance", "pardon", "foi", "mariage", "bapteme", "saint esprit", "grace", "salut"];
+  return broadTopics.some((topic) => text.includes(topic)) && !SERMON_INTENT_WORDS.some((word) => text.includes(word));
+}
+
 function bibleSearchTerms(value: string) {
   return normalizeIntent(value)
     .replace(/\b(que|dit|la|le|les|des|du|de|dans|sur|selon|bible|versets?|ecritures?|uniquement|cherche|chercher|passages?|concernant)\b/g, " ")
@@ -153,6 +172,14 @@ async function fetchBibleContext(admin: NonNullable<ReturnType<typeof createSupa
       return normTerms.some((term) => text.includes(term));
     })
     .slice(0, 8);
+}
+
+function formatBibleSection(hits: Awaited<ReturnType<typeof fetchBibleContext>>) {
+  if (hits.length === 0) return "Dans la Bible\nAucun verset exact retrouve dans la bibliotheque locale pour cette formulation.";
+  return [
+    "Dans la Bible",
+    ...hits.map((hit) => `${hit.book} ${hit.chapter}:${hit.verse} - ${hit.text}`),
+  ].join("\n");
 }
 
 function coerceStoredRefs(value: unknown) {
@@ -623,6 +650,7 @@ export async function POST(request: Request) {
 
     if (body.mode === "text" && userContent) {
       const debugEnabled = process.env.MOBOKO_CHAT_OPENAI_DEBUG === "1";
+      const includeBibleWithMessages = wantsBibleAndMessages(userContent);
       console.log("[moboko-openai] request_start");
       console.log("[moboko-openai] api_key_present=true");
       console.log("[moboko-openai] model=" + getChatModel());
@@ -651,6 +679,7 @@ export async function POST(request: Request) {
           };
           assistantState = { ...assistantState, last_source: "bible", updated_at: new Date().toISOString() };
         } else {
+        const bibleHitsForMixed = includeBibleWithMessages ? await fetchBibleContext(admin, userContent) : [];
         const agent = await runOpenAiSermonAgent({
           openai,
           admin,
@@ -661,7 +690,9 @@ export async function POST(request: Request) {
           debug: debugEnabled,
         });
         sermonContextCount = agent.hits.length;
-        assistantText = agent.text;
+        assistantText = includeBibleWithMessages
+          ? `${formatBibleSection(bibleHitsForMixed)}\n\nDans les Messages\n${agent.text}`
+          : agent.text;
         activeListId = agent.hits.length > 0 ? crypto.randomUUID() : null;
         const listReferences =
           agent.candidateRefs && agent.candidateRefs.length > agent.hits.length
@@ -733,6 +764,17 @@ export async function POST(request: Request) {
                 },
                 moboko_assistant_state: stateWithList,
                 moboko_openai_diagnostics: agent.diagnostics,
+                ...(includeBibleWithMessages
+                  ? {
+                      bible_context_count: bibleHitsForMixed.length,
+                      bible_sources: bibleHitsForMixed.map((hit) => ({
+                        translation: hit.translation,
+                        book: hit.book,
+                        chapter: hit.chapter,
+                        verse: hit.verse,
+                      })),
+                    }
+                  : {}),
                 ...(agent.noCredit ? { moboko_no_credit: true } : {}),
                 moboko_tool: "responses_api_tool_loop_rehydrated",
               }
@@ -751,6 +793,17 @@ export async function POST(request: Request) {
                 },
                 moboko_assistant_state: stateWithList,
                 moboko_openai_diagnostics: agent.diagnostics,
+                ...(includeBibleWithMessages
+                  ? {
+                      bible_context_count: bibleHitsForMixed.length,
+                      bible_sources: bibleHitsForMixed.map((hit) => ({
+                        translation: hit.translation,
+                        book: hit.book,
+                        chapter: hit.chapter,
+                        verse: hit.verse,
+                      })),
+                    }
+                  : {}),
                 ...(agent.noCredit ? { moboko_no_credit: true } : {}),
               };
         assistantState = stateWithList as Record<string, unknown>;

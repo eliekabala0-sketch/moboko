@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native";
 import { Button, Card, Field, Notice, Screen, textStyles } from "../components/ui";
 import { excerpt } from "../lib/format";
+import { publicApiJson } from "../lib/api";
 import { supabase } from "../lib/supabase";
 
 type SearchHit = {
@@ -19,11 +20,14 @@ type SearchHit = {
 
 type Sermon = { id: string; slug: string; title: string; preached_on: string | null; year: number | null; location: string | null };
 type Paragraph = { id: string; paragraph_number: number; text: string };
+type SuggestResponse = { ok: true; suggestions: Sermon[] };
 
 export function SermonsScreen() {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [sermons, setSermons] = useState<Sermon[]>([]);
+  const [suggestions, setSuggestions] = useState<Sermon[]>([]);
+  const [sort, setSort] = useState<"oldest" | "recent">("oldest");
   const [selected, setSelected] = useState<Sermon | null>(null);
   const [paragraphs, setParagraphs] = useState<Paragraph[]>([]);
   const [busy, setBusy] = useState(false);
@@ -31,14 +35,29 @@ export function SermonsScreen() {
 
   useEffect(() => {
     void loadSermons();
-  }, []);
+  }, [sort]);
+
+  useEffect(() => {
+    const term = q.trim();
+    if (term.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    const timer = setTimeout(() => {
+      const params = new URLSearchParams({ q: term, limit: "8" });
+      void publicApiJson<SuggestResponse>(`/api/sermons/suggest?${params.toString()}`)
+        .then((res) => setSuggestions(res.suggestions))
+        .catch(() => setSuggestions([]));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [q]);
 
   async function loadSermons() {
     const { data } = await supabase
       .from("sermons")
       .select("id, slug, title, preached_on, year, location")
       .eq("is_published", true)
-      .order("preached_on", { ascending: true, nullsFirst: false })
+      .order("preached_on", { ascending: sort === "oldest", nullsFirst: false })
       .limit(80);
     setSermons((data ?? []) as Sermon[]);
   }
@@ -106,6 +125,10 @@ export function SermonsScreen() {
     <Screen title="Sermons" kicker="Recherche">
       <Field value={q} onChangeText={setQ} placeholder="Phrase, paragraphe, theme..." />
       <Button label="Rechercher" onPress={() => void search()} loading={busy} disabled={!q.trim()} />
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <Button label="Anciens" secondary={sort !== "oldest"} onPress={() => setSort("oldest")} />
+        <Button label="Recents" secondary={sort !== "recent"} onPress={() => setSort("recent")} />
+      </View>
       <Notice text={error} kind="error" />
       {hits.length > 0 ? (
         <FlatList
@@ -117,6 +140,21 @@ export function SermonsScreen() {
               <Text style={[textStyles.muted, { marginTop: 4 }]}>Paragraphe {item.paragraph_number}</Text>
               <Text style={[textStyles.body, { marginTop: 8 }]}>{item.paragraph_text}</Text>
             </Card>
+          )}
+        />
+      ) : suggestions.length > 0 ? (
+        <FlatList
+          data={suggestions}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            <Pressable onPress={() => void openSermon(item)}>
+              <Card>
+                <Text style={textStyles.heading}>{item.title}</Text>
+                <Text style={[textStyles.muted, { marginTop: 6 }]}>
+                  {item.year ?? ""} {item.location ? `- ${item.location}` : ""}
+                </Text>
+              </Card>
+            </Pressable>
           )}
         />
       ) : (
