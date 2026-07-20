@@ -7,6 +7,7 @@ import Link from "next/link";
 const primaryNav = [
   { href: "/chat", label: "Assistant" },
   { href: "/sermons", label: "Sermons" },
+  { href: "/audio", label: "Audio" },
   { href: "/bible", label: "Bible" },
   { href: "/hymns", label: "Cantiques" },
   { href: "/posts", label: "Journal" },
@@ -18,6 +19,7 @@ const secondaryNav = [
   { href: "/testimonies", label: "Temoignages" },
   { href: "/support", label: "Soutien" },
   { href: "/billing", label: "Abonnement" },
+  { href: "/downloads", label: "Mes telechargements" },
   { href: "/download", label: "Installer Moboko" },
 ];
 

@@ -17,6 +17,10 @@ type Plan = {
   export_limit?: number | null;
   normal_search_unlimited?: boolean | null;
   pdf_allowed?: boolean | null;
+  audio_streaming?: boolean | null;
+  audio_offline_in_app?: boolean | null;
+  audio_full_download?: boolean | null;
+  audio_search?: boolean | null;
   is_active?: boolean | null;
   is_featured?: boolean | null;
   display_order?: number | null;
@@ -150,6 +154,22 @@ export function SubscriptionPlanForm({
       <label className="flex items-center gap-2 text-[var(--muted)]">
         <input name="pdf_allowed" type="checkbox" defaultChecked={plan?.pdf_allowed ?? true} />
         PDF autorise
+      </label>
+      <label className="flex items-center gap-2 text-[var(--muted)]">
+        <input name="audio_streaming" type="checkbox" defaultChecked={plan?.audio_streaming ?? false} />
+        Ecoute audio
+      </label>
+      <label className="flex items-center gap-2 text-[var(--muted)]">
+        <input name="audio_offline_in_app" type="checkbox" defaultChecked={plan?.audio_offline_in_app ?? false} />
+        Hors connexion Moboko
+      </label>
+      <label className="flex items-center gap-2 text-[var(--muted)]">
+        <input name="audio_full_download" type="checkbox" defaultChecked={plan?.audio_full_download ?? false} />
+        Telechargement fichier
+      </label>
+      <label className="flex items-center gap-2 text-[var(--muted)]">
+        <input name="audio_search" type="checkbox" defaultChecked={plan?.audio_search ?? false} />
+        Recherche audio
       </label>
       <label className="flex items-center gap-2 text-[var(--muted)]">
         <input name="is_featured" type="checkbox" defaultChecked={plan?.is_featured ?? false} />

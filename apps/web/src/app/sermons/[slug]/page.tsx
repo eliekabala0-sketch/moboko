@@ -43,6 +43,19 @@ export default async function SermonDetailPage({ params, searchParams }: Props) 
     .eq("sermon_id", sermon.id)
     .order("paragraph_number", { ascending: true });
 
+  const admin = createSupabaseServiceClient();
+  const { data: audioRows } = admin
+    ? await admin
+        .from("audio_items")
+        .select("id, title")
+        .eq("sermon_id", sermon.id)
+        .eq("category", "sermon")
+        .eq("is_active", true)
+        .order("created_at", { ascending: true })
+        .limit(1)
+    : { data: null };
+  const linkedAudio = audioRows?.[0] ?? null;
+
   const allParagraphs = paragraphs ?? [];
   let searchError: string | null = null;
   let quotaLine: string | null = null;
@@ -121,6 +134,14 @@ export default async function SermonDetailPage({ params, searchParams }: Props) 
           >
             Mode projection
           </Link>
+          {linkedAudio ? (
+            <Link
+              href={`/audio/${encodeURIComponent(linkedAudio.id)}`}
+              className="ml-3 inline-flex items-center rounded-full border border-[var(--border)] px-4 py-2.5 text-sm font-semibold text-[var(--muted)] transition hover:border-[var(--border-strong)] hover:text-[var(--foreground)]"
+            >
+              Ecouter l&apos;audio
+            </Link>
+          ) : null}
           <p className="mt-2 text-xs text-[var(--muted)]">
             Lecture plein écran, paragraphe par paragraphe (téléphone, bureau ou vidéoprojecteur).
           </p>

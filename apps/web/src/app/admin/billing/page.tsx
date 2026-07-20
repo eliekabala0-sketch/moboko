@@ -53,7 +53,7 @@ export default async function AdminBillingPage() {
     supabase
       .from("billing_subscription_plans")
       .select(
-        "id, plan_key, name, description, user_visible_text, price, currency, duration_days, monthly_ai_credits, export_limit, normal_search_unlimited, pdf_allowed, is_active, is_featured, display_order",
+        "id, plan_key, name, description, user_visible_text, price, currency, duration_days, monthly_ai_credits, export_limit, normal_search_unlimited, pdf_allowed, audio_streaming, audio_offline_in_app, audio_full_download, audio_search, is_active, is_featured, display_order",
       )
       .order("display_order", { ascending: true })
       .order("created_at", { ascending: true }),
