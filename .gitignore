@@ -1,3 +1,5 @@
 node_modules
 .secrets/*
 !.secrets/.gitkeep
+scripts/audio-import/reports/
+scripts/audio-import/temp/
