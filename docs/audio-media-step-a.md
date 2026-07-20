@@ -9,11 +9,11 @@ Sources lues sans modification:
 - `D:\AUDIO\SERMENT WMB`
 - `D:\AUDIO\PREDICATION\LIGNE_DE_PRIERE_DU_PROPHETE`
 
-Rapports generes hors Git:
+Derniers rapports generes hors Git:
 
-- `scripts/audio-import/reports/20260720-174318-summary.json`
-- `scripts/audio-import/reports/20260720-174318-audio-inventory.csv`
-- `scripts/audio-import/reports/20260720-174318-probable-duplicates.csv`
+- `scripts/audio-import/reports/20260720-175227-summary.json`
+- `scripts/audio-import/reports/20260720-175227-audio-inventory.csv`
+- `scripts/audio-import/reports/20260720-175227-probable-duplicates.csv`
 
 Ces rapports sont ignores par `.gitignore`.
 
@@ -74,9 +74,10 @@ Doublons exacts:
 
 Doublons probables:
 
-- 21 groupes par titre normalise.
-- Ils correspondent surtout a des titres presents a la fois dans `sermons` et `prayer_line`, ou en double format `.m4a` / `.mp3`.
-- Ces groupes ne doivent pas etre supprimes automatiquement. Ils doivent etre importes comme items distincts si la categorie ou le format a une utilite, ou marques `manual_review` si le doublon logique est incertain.
+- 5 groupes par titre normalise, calcules uniquement a l'interieur d'une meme categorie.
+- Un fichier present dans `sermons` et dans `prayer_line` n'est pas un doublon: ce sont deux categories differentes.
+- Les 5 groupes restants sont tous dans `sermon` et correspondent a un double format `.m4a` / `.mp3`.
+- Ces groupes ne doivent pas etre supprimes automatiquement. Ils doivent etre marques `manual_review` ou arbitres selon la meilleure qualite audio.
 
 ## Durees, codecs et bitrate
 

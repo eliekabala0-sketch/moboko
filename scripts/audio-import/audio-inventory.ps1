@@ -157,11 +157,12 @@ $exactDuplicates = $audioRows |
     }
   }
 $probableDuplicates = $audioRows |
-  Group-Object normalized_title |
+  Group-Object category, normalized_title |
   Where-Object { $_.Name -and $_.Count -gt 1 } |
   ForEach-Object {
     [pscustomobject]@{
-      normalized_title = $_.Name
+      category = $_.Group[0].category
+      normalized_title = $_.Group[0].normalized_title
       count = $_.Count
       files = ($_.Group | ForEach-Object { "$($_.category):$($_.relative_path)" }) -join " | "
     }
