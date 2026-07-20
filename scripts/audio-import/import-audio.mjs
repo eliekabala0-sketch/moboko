@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createReadStream, readFileSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
@@ -27,6 +27,28 @@ const root = args.get("root") ?? (category === "sermon" ? DEFAULT_SERMON_ROOT : 
 const limit = Number(args.get("limit") ?? 10);
 const singleFile = args.get("file") ?? "";
 const verify = args.get("verify") === "true";
+
+function loadEnvFile(file) {
+  if (!existsSync(file)) return;
+  for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    if (process.env[key]) continue;
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}
+
+loadEnvFile(path.join(process.cwd(), "apps", "web", ".env.local"));
 
 function requiredEnv(name) {
   const value = process.env[name]?.trim();
@@ -119,6 +141,15 @@ function mimeFor(ext) {
   return "application/octet-stream";
 }
 
+function errorMessage(error) {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const parts = [error.code, error.message, error.details, error.hint].filter(Boolean);
+    if (parts.length) return parts.join(" | ");
+  }
+  return String(error);
+}
+
 async function main() {
   const url = requiredEnv("NEXT_PUBLIC_SUPABASE_URL");
   const service = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
@@ -209,12 +240,12 @@ async function main() {
       console.log(`${dryRun ? "DRY" : "OK"} ${category} ${relative}`);
     } catch (error) {
       failed += 1;
-      console.error(`FAIL ${file}: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`FAIL ${file}: ${errorMessage(error)}`);
       await admin.from("audio_import_events").insert({
         run_id: run?.id ?? null,
         level: "error",
         event_type: "failed",
-        message: error instanceof Error ? error.message : String(error),
+        message: errorMessage(error),
         source_path: file,
       });
     }

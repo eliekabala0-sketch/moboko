@@ -1,18 +1,5 @@
 create extension if not exists pg_trgm with schema public;
 
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values (
-  'sermon-audio',
-  'sermon-audio',
-  false,
-  5368709120,
-  array['audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/aac', 'audio/wav', 'audio/flac', 'audio/ogg', 'audio/opus']
-)
-on conflict (id) do update set
-  public = false,
-  file_size_limit = excluded.file_size_limit,
-  allowed_mime_types = excluded.allowed_mime_types;
-
 alter table public.billing_subscription_plans
   add column if not exists audio_streaming boolean not null default false,
   add column if not exists audio_offline_in_app boolean not null default false,
