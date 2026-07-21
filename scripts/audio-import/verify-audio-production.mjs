@@ -92,6 +92,25 @@ for (const item of activeAudio ?? []) {
   );
 }
 
+const { data: statusRows, error: statusError } = await admin
+  .from("audio_items")
+  .select("category, import_status, is_active, storage_path");
+if (statusError) {
+  console.log(`audio_status=ERROR ${statusError.code} ${statusError.message}`);
+} else {
+  const totals = new Map();
+  const chunked = new Map();
+  for (const row of statusRows ?? []) {
+    const key = `${row.category}|${row.import_status}|active=${row.is_active}`;
+    totals.set(key, (totals.get(key) ?? 0) + 1);
+    if (String(row.storage_path ?? "").endsWith(".manifest.json")) {
+      chunked.set(row.category, (chunked.get(row.category) ?? 0) + 1);
+    }
+  }
+  for (const [key, value] of totals) console.log(`audio_status ${key}=${value}`);
+  for (const [key, value] of chunked) console.log(`audio_chunked ${key}=${value}`);
+}
+
 for (const url of ["/audio", "/admin/audio", "/api/audio?category=sermon&limit=3", "/api/audio?category=prayer_line&limit=3"]) {
   const res = await fetch(`${siteUrl}${url}`);
   const text = await res.text();

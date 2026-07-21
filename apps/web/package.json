@@ -12,11 +12,13 @@
     "@moboko/shared": "*",
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.86.0",
+    "@types/web-push": "^3.6.4",
     "next": "16.2.1",
     "openai": "^6.15.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "undici": "^6.21.2"
+    "undici": "^6.21.2",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.2",

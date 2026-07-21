@@ -8,14 +8,24 @@ type Props = {
 
 type JournalItem = {
   id: string;
-  type: "Publication" | "Requete de priere" | "Temoignage";
-  typeKey: "publication" | "prayer" | "testimony";
+  type: "Publication" | "Annonce" | "Message" | "Requete de priere" | "Temoignage";
+  typeKey: "publication" | "announcement" | "mass_message" | "prayer" | "testimony";
   title: string;
   body: string;
   author?: string | null;
   publishedAt: string;
   href: string;
   priority: number;
+};
+
+type PostRow = {
+  id: string;
+  title: string | null;
+  excerpt?: string | null;
+  body?: string | null;
+  post_type?: string | null;
+  priority?: string | null;
+  published_at: string | null;
 };
 
 function dateLabel(value: string) {
@@ -31,13 +41,14 @@ export default async function PostsPage({ searchParams }: Props) {
   const items: JournalItem[] = [];
 
   if (supabase) {
-    const [{ data: posts }, { data: prayers }, { data: testimonies }] = await Promise.all([
-      supabase
-        .from("posts")
-        .select("id, title, excerpt, body, published_at")
-        .eq("status", "published")
-        .order("published_at", { ascending: false })
-        .limit(30),
+    const postsQuery = supabase
+      .from("posts")
+      .select("id, title, excerpt, body, post_type, priority, published_at")
+      .eq("status", "published")
+      .order("published_at", { ascending: false })
+      .limit(30);
+    const [{ data: richPosts, error: postsError }, { data: prayers }, { data: testimonies }] = await Promise.all([
+      postsQuery,
       supabase
         .from("prayer_requests")
         .select("id, name, request_text, updated_at, created_at")
@@ -52,12 +63,23 @@ export default async function PostsPage({ searchParams }: Props) {
         .order("updated_at", { ascending: false })
         .limit(30),
     ]);
+    const posts: PostRow[] | null = postsError
+      ? (
+          await supabase
+            .from("posts")
+            .select("id, title, excerpt, body, published_at")
+            .eq("status", "published")
+            .order("published_at", { ascending: false })
+            .limit(30)
+        ).data
+      : richPosts;
 
     for (const post of posts ?? []) {
+      const typeKey = String(post.post_type ?? "publication") as JournalItem["typeKey"];
       items.push({
         id: String(post.id),
-        type: "Publication",
-        typeKey: "publication",
+        type: typeKey === "announcement" ? "Annonce" : typeKey === "mass_message" ? "Message" : "Publication",
+        typeKey,
         title: String(post.title ?? "Publication"),
         body: String(post.excerpt || post.body || ""),
         publishedAt: String(post.published_at ?? new Date().toISOString()),
@@ -121,6 +143,8 @@ export default async function PostsPage({ searchParams }: Props) {
           {[
             ["", "Tout"],
             ["publication", "Publications"],
+            ["announcement", "Annonces"],
+            ["mass_message", "Messages"],
             ["prayer", "Requetes"],
             ["testimony", "Temoignages"],
           ].map(([value, label]) => (

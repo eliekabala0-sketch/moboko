@@ -52,3 +52,54 @@ self.addEventListener("fetch", (event) => {
     }),
   );
 });
+
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = {};
+  }
+  const title = data.title || "Moboko";
+  const priority = data.priority === "high" ? "high" : "normal";
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: data.body || "",
+      icon: "/icons/moboko-icon.svg",
+      badge: "/icons/moboko-icon.svg",
+      tag: data.eventId || `moboko-${Date.now()}`,
+      renotify: priority === "high",
+      requireInteraction: priority === "high",
+      data: {
+        url: data.url || "/posts",
+        eventId: data.eventId || null,
+      },
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || "/posts";
+  const eventId = event.notification.data?.eventId;
+  event.waitUntil(
+    Promise.all([
+      eventId
+        ? fetch("/api/notifications/opened", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ eventId }),
+          }).catch(() => undefined)
+        : Promise.resolve(),
+      self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+        for (const client of clients) {
+          if ("focus" in client) {
+            client.navigate(url);
+            return client.focus();
+          }
+        }
+        return self.clients.openWindow(url);
+      }),
+    ]),
+  );
+});

@@ -9,6 +9,55 @@ function readId(formData: FormData) {
   return id;
 }
 
+function text(formData: FormData, key: string) {
+  return String(formData.get(key) ?? "").trim();
+}
+
+function adminName(formData: FormData, fallback: string | null) {
+  if (formData.get("anonymous") === "on") return null;
+  return text(formData, "name") || fallback || "Admin Moboko";
+}
+
+export async function createPrayerRequestAction(formData: FormData) {
+  const { supabase, user } = await requireAdmin();
+  const requestText = text(formData, "request_text");
+  if (requestText.length < 3) throw new Error("Requete vide");
+  const { error } = await supabase.from("prayer_requests").insert({
+    user_id: null,
+    name: adminName(formData, user.email ?? null),
+    email: text(formData, "email") || null,
+    request_text: requestText,
+    status: formData.get("publish") === "on" ? "reviewed" : "pending",
+    is_public: formData.get("is_public") === "on",
+    created_by_admin: true,
+    anonymous: formData.get("anonymous") === "on",
+  });
+  if (error) throw new Error(error.message);
+  revalidatePath("/admin/engagement");
+  revalidatePath("/requests");
+  revalidatePath("/posts");
+}
+
+export async function createTestimonyAction(formData: FormData) {
+  const { supabase, user } = await requireAdmin();
+  const title = text(formData, "title");
+  const testimonyText = text(formData, "testimony_text");
+  if (title.length < 2 || testimonyText.length < 3) throw new Error("Temoignage incomplet");
+  const { error } = await supabase.from("testimonies").insert({
+    user_id: null,
+    name: adminName(formData, user.email ?? null),
+    title,
+    testimony_text: testimonyText,
+    status: formData.get("publish") === "on" ? "published" : "pending",
+    created_by_admin: true,
+    anonymous: formData.get("anonymous") === "on",
+  });
+  if (error) throw new Error(error.message);
+  revalidatePath("/admin/engagement");
+  revalidatePath("/testimonies");
+  revalidatePath("/posts");
+}
+
 export async function reviewPrayerRequestAction(formData: FormData) {
   const { supabase } = await requireAdmin();
   const id = readId(formData);

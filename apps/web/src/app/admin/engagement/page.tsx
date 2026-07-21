@@ -2,6 +2,8 @@ import {
   archivePrayerRequestAction,
   archiveSupportMessageAction,
   archiveTestimonyAction,
+  createPrayerRequestAction,
+  createTestimonyAction,
   deletePrayerRequestAction,
   deleteSupportMessageAction,
   deleteTestimonyAction,
@@ -40,6 +42,39 @@ export default async function AdminEngagementPage() {
         Requetes, temoignages et soutien
       </h1>
       <div className="mt-8 grid gap-6">
+        <section className="moboko-card p-5">
+          <h2 className="font-semibold text-[var(--foreground)]">Creer une requete</h2>
+          <form action={createPrayerRequestAction} className="mt-4 grid gap-3">
+            <div className="grid gap-3 md:grid-cols-2">
+              <input name="name" className="moboko-input" placeholder="Nom affiche" />
+              <input name="email" type="email" className="moboko-input" placeholder="Email optionnel" />
+            </div>
+            <textarea name="request_text" required minLength={3} className="moboko-input min-h-28 resize-y" placeholder="Requete" />
+            <div className="flex flex-wrap gap-4 text-sm text-[var(--muted)]">
+              <label className="flex items-center gap-2"><input name="anonymous" type="checkbox" /> Anonyme</label>
+              <label className="flex items-center gap-2"><input name="is_public" type="checkbox" /> Publique</label>
+              <label className="flex items-center gap-2"><input name="publish" type="checkbox" /> Valider maintenant</label>
+            </div>
+            <button className="moboko-btn-primary w-fit px-5 py-2 text-sm">Creer</button>
+          </form>
+        </section>
+
+        <section className="moboko-card p-5">
+          <h2 className="font-semibold text-[var(--foreground)]">Publier un temoignage</h2>
+          <form action={createTestimonyAction} className="mt-4 grid gap-3">
+            <div className="grid gap-3 md:grid-cols-2">
+              <input name="name" className="moboko-input" placeholder="Nom affiche" />
+              <input name="title" required minLength={2} className="moboko-input" placeholder="Titre" />
+            </div>
+            <textarea name="testimony_text" required minLength={3} className="moboko-input min-h-28 resize-y" placeholder="Temoignage" />
+            <div className="flex flex-wrap gap-4 text-sm text-[var(--muted)]">
+              <label className="flex items-center gap-2"><input name="anonymous" type="checkbox" /> Anonyme</label>
+              <label className="flex items-center gap-2"><input name="publish" type="checkbox" /> Publier maintenant</label>
+            </div>
+            <button className="moboko-btn-primary w-fit px-5 py-2 text-sm">Creer</button>
+          </form>
+        </section>
+
         <section className="moboko-card p-5">
           <h2 className="font-semibold text-[var(--foreground)]">Requetes de priere</h2>
           <ul className="mt-4 space-y-3">

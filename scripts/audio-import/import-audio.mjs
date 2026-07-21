@@ -29,6 +29,9 @@ const singleFile = args.get("file") ?? "";
 const verify = args.get("verify") === "true";
 const bucketLimit = Number(args.get("bucket-limit") ?? 50 * 1024 * 1024);
 const chunkSize = Number(args.get("chunk-size") ?? 45 * 1024 * 1024);
+const maxRetries = Number(args.get("retries") ?? 4);
+const onlyFailed = args.get("only-failed") === "true";
+const onlyInventoried = args.get("only-inventoried") === "true";
 
 function loadEnvFile(file) {
   if (!existsSync(file)) return;
@@ -115,7 +118,7 @@ async function findSermon(admin, item) {
   let query = admin.from("sermons").select("id, title, preached_on, year, location").eq("is_published", true).limit(20);
   if (item.date) query = query.eq("preached_on", item.date);
   else if (item.year) query = query.eq("year", item.year);
-  const { data } = await query;
+  const { data } = await retry("find sermon", () => query);
   const title = normalize(item.title);
   let best = null;
   for (const sermon of data ?? []) {
@@ -143,6 +146,29 @@ function mimeFor(ext) {
   return "application/octet-stream";
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function retry(label, fn) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    try {
+      const result = await fn();
+      if (!result?.error) return result;
+      lastError = result.error;
+      const message = errorMessage(result.error).toLowerCase();
+      if (message.includes("already exists")) return result;
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt < maxRetries) {
+      await sleep(Math.min(1500 * 2 ** attempt, 12000));
+    }
+  }
+  throw new Error(`${label}: ${errorMessage(lastError)}`);
+}
+
 function chunkStorageParts(category, yearSegment, checksum, original) {
   const safe = safeFilename(original);
   const base = `chunks/${category === "sermon" ? "sermons" : "prayer-lines"}/${yearSegment}/${checksum.slice(0, 12)}-${safe}`;
@@ -158,13 +184,17 @@ function chunkStorageParts(category, yearSegment, checksum, original) {
 async function uploadFileOrChunks(admin, file, row, checksum, yearSegment, original) {
   if (row.file_size <= bucketLimit) {
     const body = readFileSync(file);
-    const upload = await admin.storage.from("sermon-audio").upload(row.storage_path, body, {
-      contentType: row.mime_type,
-      upsert: false,
-    });
+    const upload = await retry(`upload ${row.storage_path}`, () =>
+      admin.storage.from("sermon-audio").upload(row.storage_path, body, {
+        contentType: row.mime_type,
+        upsert: false,
+      }),
+    );
     if (upload.error && !String(upload.error.message).toLowerCase().includes("already exists")) throw upload.error;
     if (verify) {
-      const remote = await admin.storage.from("sermon-audio").list(path.dirname(row.storage_path), { search: path.basename(row.storage_path), limit: 1 });
+      const remote = await retry(`verify ${row.storage_path}`, () =>
+        admin.storage.from("sermon-audio").list(path.dirname(row.storage_path), { search: path.basename(row.storage_path), limit: 1 }),
+      );
       if (remote.error || !remote.data?.length) throw new Error("verification_upload_echouee");
     }
     return { storagePath: row.storage_path, chunked: false, chunks: 0 };
@@ -176,10 +206,12 @@ async function uploadFileOrChunks(admin, file, row, checksum, yearSegment, origi
   for (let offset = 0, index = 0; offset < body.length; offset += chunkSize, index += 1) {
     const bytes = body.subarray(offset, Math.min(offset + chunkSize, body.length));
     const chunkPath = parts.chunkPath(index);
-    const upload = await admin.storage.from("sermon-audio").upload(chunkPath, bytes, {
-      contentType: "application/octet-stream",
-      upsert: false,
-    });
+    const upload = await retry(`upload ${chunkPath}`, () =>
+      admin.storage.from("sermon-audio").upload(chunkPath, bytes, {
+        contentType: "application/octet-stream",
+        upsert: false,
+      }),
+    );
     if (upload.error && !String(upload.error.message).toLowerCase().includes("already exists")) throw upload.error;
     chunks.push({ path: chunkPath, offset, size: bytes.length, index });
   }
@@ -193,13 +225,17 @@ async function uploadFileOrChunks(admin, file, row, checksum, yearSegment, origi
     checksum,
     chunks,
   };
-  const manifestUpload = await admin.storage.from("sermon-audio").upload(parts.manifestPath, JSON.stringify(manifest), {
-    contentType: "application/json",
-    upsert: true,
-  });
+  const manifestUpload = await retry(`upload ${parts.manifestPath}`, () =>
+    admin.storage.from("sermon-audio").upload(parts.manifestPath, JSON.stringify(manifest), {
+      contentType: "application/json",
+      upsert: true,
+    }),
+  );
   if (manifestUpload.error) throw manifestUpload.error;
   if (verify) {
-    const remote = await admin.storage.from("sermon-audio").list(path.dirname(parts.manifestPath), { search: path.basename(parts.manifestPath), limit: 1 });
+    const remote = await retry(`verify ${parts.manifestPath}`, () =>
+      admin.storage.from("sermon-audio").list(path.dirname(parts.manifestPath), { search: path.basename(parts.manifestPath), limit: 1 }),
+    );
     if (remote.error || !remote.data?.length) throw new Error("verification_manifest_echouee");
   }
   return { storagePath: parts.manifestPath, chunked: true, chunks: chunks.length };
@@ -222,15 +258,51 @@ async function main() {
   if (!rootStat.isDirectory()) throw new Error(`Chemin source invalide: ${root}`);
 
   const allFiles = singleFile ? [singleFile] : await walk(root);
-  const files = allFiles
+  let files = allFiles
     .filter((file) => AUDIO_EXTENSIONS.has(path.extname(file).toLowerCase()))
     .slice(0, limit > 0 ? limit : undefined);
 
-  const { data: run } = await admin
-    .from("audio_import_runs")
-    .insert({ source_root: root, category, dry_run: dryRun, total_files: files.length })
-    .select("id")
-    .single();
+  if (onlyFailed && !singleFile) {
+    const { data: failedEvents } = await retry("load failed audio events", () =>
+      admin
+        .from("audio_import_events")
+        .select("source_path")
+        .eq("event_type", "failed")
+        .order("created_at", { ascending: false })
+        .limit(1000),
+    );
+    const failedPaths = new Set(
+      (failedEvents ?? [])
+        .map((event) => String(event.source_path ?? ""))
+        .filter((sourcePath) => sourcePath && existsSync(sourcePath) && path.resolve(sourcePath).startsWith(path.resolve(root))),
+    );
+    files = files.filter((file) => failedPaths.has(file));
+  }
+
+  if (onlyInventoried && !singleFile) {
+    const { data: inventoriedItems } = await retry("load inventoried audio items", () =>
+      admin
+        .from("audio_items")
+        .select("original_relative_path")
+        .eq("category", category)
+        .eq("import_status", "inventoried")
+        .limit(1000),
+    );
+    const inventoriedPaths = new Set(
+      (inventoriedItems ?? [])
+        .map((item) => path.join(root, String(item.original_relative_path ?? "")))
+        .filter((sourcePath) => sourcePath && existsSync(sourcePath)),
+    );
+    files = files.filter((file) => inventoriedPaths.has(file));
+  }
+
+  const { data: run } = await retry("create import run", () =>
+    admin
+      .from("audio_import_runs")
+      .insert({ source_root: root, category, dry_run: dryRun, total_files: files.length })
+      .select("id")
+      .single(),
+  );
 
   let uploaded = 0;
   let skipped = 0;
@@ -283,18 +355,19 @@ async function main() {
         skipped += 1;
       }
 
-      const { data: existing, error: existingError } = await admin
-        .from("audio_items")
-        .select("id")
-        .eq("category", category)
-        .eq("original_relative_path", relative)
-        .maybeSingle();
-      if (existingError) throw existingError;
+      const { data: existing } = await retry(`select audio item ${relative}`, () =>
+        admin
+          .from("audio_items")
+          .select("id")
+          .eq("category", category)
+          .eq("original_relative_path", relative)
+          .maybeSingle(),
+      );
       const write = existing?.id
-        ? await admin.from("audio_items").update(row).eq("id", existing.id)
-        : await admin.from("audio_items").insert(row);
+        ? await retry(`update audio item ${relative}`, () => admin.from("audio_items").update(row).eq("id", existing.id))
+        : await retry(`insert audio item ${relative}`, () => admin.from("audio_items").insert(row));
       if (write.error) throw write.error;
-      await admin.from("audio_import_events").insert({
+      await retry(`event audio item ${relative}`, () => admin.from("audio_import_events").insert({
         run_id: run?.id ?? null,
         level: "info",
         event_type: dryRun ? "inventoried" : "uploaded",
@@ -302,32 +375,34 @@ async function main() {
         source_path: file,
         storage_path: row.storage_path,
         payload: { checksum, match, chunked: row.storage_path.endsWith(".manifest.json") },
-      });
+      }));
       console.log(`${dryRun ? "DRY" : "OK"} ${category} ${relative}`);
     } catch (error) {
       failed += 1;
       console.error(`FAIL ${file}: ${errorMessage(error)}`);
-      await admin.from("audio_import_events").insert({
+      await retry(`failed event ${file}`, () => admin.from("audio_import_events").insert({
         run_id: run?.id ?? null,
         level: "error",
         event_type: "failed",
         message: errorMessage(error),
         source_path: file,
-      });
+      }));
     }
   }
 
-  await admin
-    .from("audio_import_runs")
-    .update({
-      status: failed > 0 ? "failed" : "completed",
-      processed_files: files.length,
-      uploaded_files: uploaded,
-      skipped_files: skipped,
-      failed_files: failed,
-      finished_at: new Date().toISOString(),
-    })
-    .eq("id", run?.id);
+  await retry("finish import run", () =>
+    admin
+      .from("audio_import_runs")
+      .update({
+        status: failed > 0 ? "failed" : "completed",
+        processed_files: files.length,
+        uploaded_files: uploaded,
+        skipped_files: skipped,
+        failed_files: failed,
+        finished_at: new Date().toISOString(),
+      })
+      .eq("id", run?.id),
+  );
 
   console.log(`Import termine dryRun=${dryRun} processed=${files.length} uploaded=${uploaded} skipped=${skipped} failed=${failed}`);
 }

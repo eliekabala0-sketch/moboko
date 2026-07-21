@@ -59,6 +59,12 @@ export default async function AdminLayout({
               Publications
             </Link>
             <Link
+              href="/admin/notifications"
+              className="text-sm text-[var(--muted)] transition hover:text-[var(--foreground)]"
+            >
+              Notifications
+            </Link>
+            <Link
               href="/admin/engagement"
               className="text-sm text-[var(--muted)] transition hover:text-[var(--foreground)]"
             >

@@ -20,6 +20,7 @@ const secondaryNav = [
   { href: "/support", label: "Soutien" },
   { href: "/billing", label: "Abonnement" },
   { href: "/downloads", label: "Mes telechargements" },
+  { href: "/notifications", label: "Notifications" },
   { href: "/download", label: "Installer Moboko" },
 ];
 
