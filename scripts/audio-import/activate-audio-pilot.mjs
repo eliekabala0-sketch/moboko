@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const PILOT_FILES = [
   "FRN63-1226 Church Order VGR.mp3",
+  "FRN63-1226 Church Order VGR.m4a",
   "FRN64-0305 Perseverant VGR.mp3",
   "FRN65-0221 M Marriage And Divorce VGR.mp3",
   "FRN64-0802 Future Home VGR.mp3",
@@ -48,7 +49,7 @@ const { data: items, error } = await admin
   .from("audio_items")
   .select("id, category, title, original_filename, file_size, sermon_id, sermon_match_status, storage_path")
   .in("original_filename", PILOT_FILES)
-  .eq("import_status", "uploaded");
+  .in("import_status", ["uploaded", "verified"]);
 
 if (error) throw error;
 

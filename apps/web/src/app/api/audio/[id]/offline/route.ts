@@ -1,4 +1,6 @@
 import { canUseAudioRight, getAudioAccess } from "@/lib/audio/access";
+import { isManifestPath } from "@/lib/audio/chunked-stream";
+import { createAudioToken } from "@/lib/audio/stream-token";
 import { getUserFromApiRequest } from "@/lib/supabase/api-auth";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
 import { NextResponse } from "next/server";
@@ -23,8 +25,15 @@ export async function POST(request: Request, { params }: Params) {
     .eq("id", id)
     .maybeSingle();
   if (!audio?.is_active || !audio.offline_enabled) return NextResponse.json({ error: "audio_indisponible" }, { status: 404 });
-  const { data, error } = await admin.storage.from(audio.storage_bucket).createSignedUrl(audio.storage_path, 1800);
-  if (error || !data?.signedUrl) return NextResponse.json({ error: "url_audio_indisponible" }, { status: 500 });
+  let url: string;
+  if (isManifestPath(audio.storage_path)) {
+    const token = createAudioToken({ audioId: audio.id, action: "stream", exp: Math.floor(Date.now() / 1000) + 1800 });
+    url = `/api/audio/${audio.id}/stream?token=${encodeURIComponent(token)}`;
+  } else {
+    const { data, error } = await admin.storage.from(audio.storage_bucket).createSignedUrl(audio.storage_path, 1800);
+    if (error || !data?.signedUrl) return NextResponse.json({ error: "url_audio_indisponible" }, { status: 500 });
+    url = data.signedUrl;
+  }
   await admin.from("audio_offline_records").upsert(
     {
       user_id: user.id,
@@ -36,5 +45,5 @@ export async function POST(request: Request, { params }: Params) {
     },
     { onConflict: "user_id,audio_id,download_type,device_id" },
   );
-  return NextResponse.json({ ok: true, url: data.signedUrl, expires_in: 1800, file_size: audio.file_size });
+  return NextResponse.json({ ok: true, url, expires_in: 1800, file_size: audio.file_size });
 }

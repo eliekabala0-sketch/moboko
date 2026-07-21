@@ -27,6 +27,8 @@ const root = args.get("root") ?? (category === "sermon" ? DEFAULT_SERMON_ROOT : 
 const limit = Number(args.get("limit") ?? 10);
 const singleFile = args.get("file") ?? "";
 const verify = args.get("verify") === "true";
+const bucketLimit = Number(args.get("bucket-limit") ?? 50 * 1024 * 1024);
+const chunkSize = Number(args.get("chunk-size") ?? 45 * 1024 * 1024);
 
 function loadEnvFile(file) {
   if (!existsSync(file)) return;
@@ -141,6 +143,68 @@ function mimeFor(ext) {
   return "application/octet-stream";
 }
 
+function chunkStorageParts(category, yearSegment, checksum, original) {
+  const safe = safeFilename(original);
+  const base = `chunks/${category === "sermon" ? "sermons" : "prayer-lines"}/${yearSegment}/${checksum.slice(0, 12)}-${safe}`;
+  return {
+    base,
+    manifestPath: `${base}.manifest.json`,
+    chunkPath(index) {
+      return `${base}.part-${String(index).padStart(4, "0")}`;
+    },
+  };
+}
+
+async function uploadFileOrChunks(admin, file, row, checksum, yearSegment, original) {
+  if (row.file_size <= bucketLimit) {
+    const body = readFileSync(file);
+    const upload = await admin.storage.from("sermon-audio").upload(row.storage_path, body, {
+      contentType: row.mime_type,
+      upsert: false,
+    });
+    if (upload.error && !String(upload.error.message).toLowerCase().includes("already exists")) throw upload.error;
+    if (verify) {
+      const remote = await admin.storage.from("sermon-audio").list(path.dirname(row.storage_path), { search: path.basename(row.storage_path), limit: 1 });
+      if (remote.error || !remote.data?.length) throw new Error("verification_upload_echouee");
+    }
+    return { storagePath: row.storage_path, chunked: false, chunks: 0 };
+  }
+
+  const parts = chunkStorageParts(row.category, yearSegment, checksum, original);
+  const body = readFileSync(file);
+  const chunks = [];
+  for (let offset = 0, index = 0; offset < body.length; offset += chunkSize, index += 1) {
+    const bytes = body.subarray(offset, Math.min(offset + chunkSize, body.length));
+    const chunkPath = parts.chunkPath(index);
+    const upload = await admin.storage.from("sermon-audio").upload(chunkPath, bytes, {
+      contentType: "application/octet-stream",
+      upsert: false,
+    });
+    if (upload.error && !String(upload.error.message).toLowerCase().includes("already exists")) throw upload.error;
+    chunks.push({ path: chunkPath, offset, size: bytes.length, index });
+  }
+  const manifest = {
+    kind: "moboko-audio-chunks",
+    version: 1,
+    bucket: "sermon-audio",
+    originalFilename: original,
+    mimeType: row.mime_type,
+    size: row.file_size,
+    checksum,
+    chunks,
+  };
+  const manifestUpload = await admin.storage.from("sermon-audio").upload(parts.manifestPath, JSON.stringify(manifest), {
+    contentType: "application/json",
+    upsert: true,
+  });
+  if (manifestUpload.error) throw manifestUpload.error;
+  if (verify) {
+    const remote = await admin.storage.from("sermon-audio").list(path.dirname(parts.manifestPath), { search: path.basename(parts.manifestPath), limit: 1 });
+    if (remote.error || !remote.data?.length) throw new Error("verification_manifest_echouee");
+  }
+  return { storagePath: parts.manifestPath, chunked: true, chunks: chunks.length };
+}
+
 function errorMessage(error) {
   if (error instanceof Error) return error.message;
   if (error && typeof error === "object") {
@@ -211,31 +275,33 @@ async function main() {
       };
 
       if (!dryRun) {
-        const body = readFileSync(file);
-        const upload = await admin.storage.from("sermon-audio").upload(storagePath, body, {
-          contentType: row.mime_type,
-          upsert: false,
-        });
-        if (upload.error && !String(upload.error.message).toLowerCase().includes("already exists")) throw upload.error;
-        if (verify) {
-          const remote = await admin.storage.from("sermon-audio").list(path.dirname(storagePath), { search: path.basename(storagePath), limit: 1 });
-          if (remote.error || !remote.data?.length) throw new Error("verification_upload_echouee");
-        }
+        const uploadedFile = await uploadFileOrChunks(admin, file, row, checksum, yearSegment, original);
+        row.storage_path = uploadedFile.storagePath;
         uploaded += 1;
+        row.import_status = uploadedFile.chunked ? "verified" : row.import_status;
       } else {
         skipped += 1;
       }
 
-      const { error } = await admin.from("audio_items").upsert(row, { onConflict: "storage_path" });
-      if (error) throw error;
+      const { data: existing, error: existingError } = await admin
+        .from("audio_items")
+        .select("id")
+        .eq("category", category)
+        .eq("original_relative_path", relative)
+        .maybeSingle();
+      if (existingError) throw existingError;
+      const write = existing?.id
+        ? await admin.from("audio_items").update(row).eq("id", existing.id)
+        : await admin.from("audio_items").insert(row);
+      if (write.error) throw write.error;
       await admin.from("audio_import_events").insert({
         run_id: run?.id ?? null,
         level: "info",
         event_type: dryRun ? "inventoried" : "uploaded",
         message: original,
         source_path: file,
-        storage_path: storagePath,
-        payload: { checksum, match },
+        storage_path: row.storage_path,
+        payload: { checksum, match, chunked: row.storage_path.endsWith(".manifest.json") },
       });
       console.log(`${dryRun ? "DRY" : "OK"} ${category} ${relative}`);
     } catch (error) {

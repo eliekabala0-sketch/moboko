@@ -12,6 +12,8 @@ const ALLOWED_MIME_TYPES = [
   "audio/flac",
   "audio/ogg",
   "audio/opus",
+  "application/json",
+  "application/octet-stream",
 ];
 
 function loadEnvFile(file) {
