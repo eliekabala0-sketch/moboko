@@ -43,7 +43,36 @@ export async function saveAudioItemAction(formData: FormData) {
     full_download_enabled: boolValue(formData, "full_download_enabled"),
     updated_by: user.id,
   };
-  const { error } = await supabase.from("audio_items").update(payload).eq("id", id);
+  const extendedPayload = {
+    ...payload,
+    access_policy: text(formData, "access_policy") || "subscription",
+    free_excerpt_seconds: Math.max(0, Math.floor(numberOrNull(formData, "free_excerpt_seconds") ?? 0)),
+    free_monthly_play_limit: numberOrNull(formData, "free_monthly_play_limit"),
+  };
+  let { error } = await supabase.from("audio_items").update(extendedPayload).eq("id", id);
+  if (error?.code === "42703" || error?.code === "PGRST204") {
+    const fallback = await supabase.from("audio_items").update(payload).eq("id", id);
+    error = fallback.error;
+  }
+  if (error) throw new Error(error.message);
+  revalidatePath("/admin/audio");
+  revalidatePath("/audio");
+}
+
+export async function saveAudioAccessSettingsAction(formData: FormData) {
+  const { supabase, user } = await requireAdmin();
+  const payload = {
+    id: true,
+    free_streaming_enabled: boolValue(formData, "free_streaming_enabled"),
+    free_streaming_monthly_limit: numberOrNull(formData, "free_streaming_monthly_limit"),
+    free_offline_in_app: boolValue(formData, "free_offline_in_app"),
+    free_full_download: boolValue(formData, "free_full_download"),
+    free_audio_search: boolValue(formData, "free_audio_search"),
+    free_excerpt_seconds: Math.max(0, Math.floor(numberOrNull(formData, "free_excerpt_seconds") ?? 0)),
+    updated_by: user.id,
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabase.from("audio_access_settings").upsert(payload, { onConflict: "id" });
   if (error) throw new Error(error.message);
   revalidatePath("/admin/audio");
   revalidatePath("/audio");

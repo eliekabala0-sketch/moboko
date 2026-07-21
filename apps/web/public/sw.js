@@ -70,6 +70,11 @@ self.addEventListener("push", (event) => {
       tag: data.eventId || `moboko-${Date.now()}`,
       renotify: priority === "high",
       requireInteraction: priority === "high",
+      silent: false,
+      timestamp: Date.now(),
+      actions: [
+        { action: "open", title: "Ouvrir" },
+      ],
       data: {
         url: data.url || "/posts",
         eventId: data.eventId || null,

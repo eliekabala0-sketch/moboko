@@ -135,12 +135,13 @@ export async function sendPushEvent(admin: SupabaseClient, input: EventInput) {
     }
   }
 
+  const status = !configured ? "failed" : sent > 0 ? "sent" : failed > 0 || skipped > 0 ? "failed" : "sent";
   await admin
     .from("notification_events")
     .update({
-      status: failed > 0 && sent === 0 ? "failed" : "sent",
+      status,
       sent_at: new Date().toISOString(),
-      payload: { sent, failed, skipped },
+      payload: { sent, failed, skipped, configured },
     })
     .eq("id", event.id);
 

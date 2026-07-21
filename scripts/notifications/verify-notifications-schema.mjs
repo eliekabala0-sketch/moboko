@@ -57,9 +57,10 @@ await check(
   admin.from("testimonies").select("id, created_by_admin, anonymous").limit(1),
 );
 
-for (const table of ["push_subscriptions", "notification_preferences", "notification_events", "notification_deliveries"]) {
-  await check(table, admin.from(table).select("id").limit(1));
-}
+await check("push_subscriptions", admin.from("push_subscriptions").select("id").limit(1));
+await check("notification_preferences", admin.from("notification_preferences").select("user_id").limit(1));
+await check("notification_events", admin.from("notification_events").select("id").limit(1));
+await check("notification_deliveries", admin.from("notification_deliveries").select("id").limit(1));
 
 console.log(`vapid_public=${process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ? "present" : "missing"}`);
 console.log(`vapid_private=${process.env.VAPID_PRIVATE_KEY ? "present" : "missing"}`);

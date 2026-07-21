@@ -1,4 +1,5 @@
 import type { SermonParagraphCandidate } from "@/lib/sermons/ai-sermon-search-server";
+import { attachLinkedSermonAudio } from "@/lib/sermons/linked-audio";
 import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
 import { getOpenAIClient } from "@/lib/ai/moboko-chat";
 import { resolveHybridRetrieval } from "@/lib/sermons/retrieval-resolve";
@@ -326,13 +327,14 @@ export async function POST(request: Request) {
       _total_count: page.totalCount,
     });
   }
-  diagnostics.rehydrated_count = results.length;
-  aiLog("rehydrated_count", { count: results.length });
-  aiLog("final_count", { count: results.length, total: page.totalCount, ms: Date.now() - startedAt });
+  const enrichedResults = await attachLinkedSermonAudio(admin, results);
+  diagnostics.rehydrated_count = enrichedResults.length;
+  aiLog("rehydrated_count", { count: enrichedResults.length });
+  aiLog("final_count", { count: enrichedResults.length, total: page.totalCount, ms: Date.now() - startedAt });
 
   return NextResponse.json({
     ok: true,
-    results,
+    results: enrichedResults,
     total_count: page.totalCount,
     offset: page.offset,
     page_size: page.pageSize,

@@ -30,7 +30,9 @@ export async function createPostAction(formData: FormData) {
   const status = text(formData, "status") === "published" ? "published" : "draft";
   const scheduledRaw = text(formData, "scheduled_at");
   const scheduledAt = scheduledRaw ? new Date(scheduledRaw).toISOString() : null;
-  const notify = formData.get("notify_on_publish") === "on";
+  const importantPost = postType === "announcement" || postType === "mass_message";
+  const notify = formData.get("notify_on_publish") === "on" || importantPost;
+  const effectivePriority = importantPost ? "high" : priority;
   const slug = `${slugify(title)}-${Date.now().toString(36)}`;
   const publishedAt = status === "published" && !scheduledAt ? new Date().toISOString() : null;
   const { data, error } = await supabase
@@ -44,7 +46,7 @@ export async function createPostAction(formData: FormData) {
       status: scheduledAt ? "draft" : status,
       published_at: publishedAt,
       post_type: postType,
-      priority,
+      priority: effectivePriority,
       scheduled_at: scheduledAt,
       notify_on_publish: notify,
       notification_title: text(formData, "notification_title") || title,
@@ -60,7 +62,7 @@ export async function createPostAction(formData: FormData) {
       title: text(formData, "notification_title") || title,
       body: text(formData, "notification_body") || body.slice(0, 160),
       url: `/posts#publication-${data.id}`,
-      priority,
+      priority: effectivePriority,
       postId: data.id,
       createdBy: user.id,
     });
@@ -86,13 +88,14 @@ export async function publishPostAction(formData: FormData) {
     .update({ status: "published", published_at: new Date().toISOString(), scheduled_at: null })
     .eq("id", id);
   if (error) throw new Error(error.message);
-  if (notify) {
+  const importantPost = post.post_type === "announcement" || post.post_type === "mass_message";
+  if (notify || importantPost) {
     await sendPushEvent(supabase, {
       kind: String(post.post_type ?? "publication"),
       title: String(post.notification_title || post.title),
       body: String(post.notification_body || post.body || "").slice(0, 180),
       url: `/posts#publication-${id}`,
-      priority: post.priority === "high" ? "high" : "normal",
+      priority: importantPost || post.priority === "high" ? "high" : "normal",
       postId: id,
       createdBy: user.id,
     });

@@ -206,6 +206,7 @@ export function ConcordanceHitsView({
     const slugEnc = encodeURIComponent(selected.slug);
     const readHref = `/sermons/${slugEnc}#p-${selected.paragraph_number}`;
     const projectHref = `/sermons/${slugEnc}/project?p=${selected.paragraph_number}`;
+    const audioHref = selected.linked_audio_id ? `/audio/${encodeURIComponent(selected.linked_audio_id)}` : null;
 
     return (
       <div className="space-y-4">
@@ -273,6 +274,14 @@ export function ConcordanceHitsView({
             >
               Projeter
             </Link>
+            {audioHref ? (
+              <Link
+                href={audioHref}
+                className="inline-flex items-center rounded-full border border-[var(--border-strong)] bg-[var(--surface)] px-5 py-2.5 text-[13px] font-semibold text-[var(--foreground)] transition hover:border-[var(--accent)]/40"
+              >
+                Ecouter
+              </Link>
+            ) : null}
           </div>
         </article>
       </div>
@@ -317,6 +326,11 @@ export function ConcordanceHitsView({
               <p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">
                 <HighlightedText text={clipPreview(h.paragraph_text)} query={h._query} />
               </p>
+              {h.linked_audio_id ? (
+                <span className="mt-3 inline-flex text-xs font-semibold text-[var(--accent)]">
+                  Audio disponible
+                </span>
+              ) : null}
             </button>
           </li>
         );

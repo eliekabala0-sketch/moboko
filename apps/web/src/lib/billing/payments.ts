@@ -142,6 +142,8 @@ export async function createBillingCheckout(opts: {
   successUrl?: string | null;
   cancelUrl?: string | null;
 }) {
+  const startedAt = Date.now();
+  const timings: Record<string, number> = {};
   const offer = await resolveOffer({
     admin: opts.admin,
     purpose: opts.purpose,
@@ -149,7 +151,9 @@ export async function createBillingCheckout(opts: {
     packId: opts.packId,
     amount: opts.amount,
   });
+  timings.resolve_offer_ms = Date.now() - startedAt;
   const idempotencyKey = opts.idempotencyKey?.trim() || crypto.randomUUID();
+  const insertStarted = Date.now();
   const { data: tx, error } = await opts.admin
     .from("payment_transactions")
     .insert({
@@ -182,11 +186,13 @@ export async function createBillingCheckout(opts: {
     })
     .select("id")
     .single();
+  timings.transaction_insert_ms = Date.now() - insertStarted;
   if (error?.code === "23505") {
-    return { ok: false as const, error: "duplicate_checkout" as const };
+    return { ok: false as const, error: "duplicate_checkout" as const, timings };
   }
   if (error || !tx?.id) throw new Error(error?.message ?? "transaction_creation_failed");
 
+  const providerStarted = Date.now();
   const checkout = await createPaymentCheckout({
     transactionId: tx.id as string,
     userId: opts.userId,
@@ -207,15 +213,20 @@ export async function createBillingCheckout(opts: {
     successUrl: opts.successUrl || `${opts.siteUrl}/${opts.purpose === "support_donation" ? "support" : "billing"}?status=pending`,
     cancelUrl: opts.cancelUrl || `${opts.siteUrl}/${opts.purpose === "support_donation" ? "support" : "billing"}?status=cancelled`,
   });
+  timings.provider_call_ms = checkout.providerMs ?? Date.now() - providerStarted;
 
   if (!checkout.ok) {
+    const updateStarted = Date.now();
     await opts.admin
       .from("payment_transactions")
-      .update({ status: "provider_unavailable", metadata: { provider_error: checkout } })
+      .update({ status: "provider_unavailable", metadata: { provider_error: checkout, timings } })
       .eq("id", tx.id as string);
-    return checkout;
+    timings.transaction_update_ms = Date.now() - updateStarted;
+    timings.total_ms = Date.now() - startedAt;
+    return { ...checkout, timings };
   }
 
+  const updateStarted = Date.now();
   await opts.admin
     .from("payment_transactions")
     .update({
@@ -239,11 +250,14 @@ export async function createBillingCheckout(opts: {
         city: opts.payment.city,
         country: opts.payment.country,
         operator: opts.payment.operator,
+        timings,
       },
     })
     .eq("id", tx.id as string);
+  timings.transaction_update_ms = Date.now() - updateStarted;
+  timings.total_ms = Date.now() - startedAt;
 
-  return checkout;
+  return { ...checkout, timings };
 }
 
 export async function applyPaymentWebhook(admin: SupabaseClient, event: PaymentWebhookEvent) {

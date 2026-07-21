@@ -14,6 +14,7 @@ import { runOpenAiSermonAgent } from "@/lib/chat/openai-sermon-agent";
 import { ensureMonthlySubscriptionCredits } from "@/lib/billing/subscription-credits";
 import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
 import { fetchSingleParagraphCandidate } from "@/lib/sermons/retrieval-direct";
+import { attachLinkedSermonAudio } from "@/lib/sermons/linked-audio";
 import {
   ALL_PUBLIC_APP_SETTING_KEYS,
   parseAppSettingScalar,
@@ -239,7 +240,7 @@ async function rehydrateStoredRefs(
       _total_count: meta.totalCount,
     });
   }
-  return out;
+  return attachLinkedSermonAudio(admin, out);
 }
 
 export async function POST(request: Request) {
@@ -706,12 +707,12 @@ export async function POST(request: Request) {
         const listNextOffset =
           listReferences.length > agent.hits.length ? agent.hits.length : agent.nextOffset;
         const listHasMore = listReferences.length > agent.hits.length || agent.hasMore;
-        const displayResults = agent.hits.map((hit) => ({
+        const displayResults = await attachLinkedSermonAudio(admin, agent.hits.map((hit) => ({
           ...hit,
           _next_offset: listNextOffset,
           _has_more: listHasMore,
           _total_count: Math.max(agent.totalCount, listReferences.length),
-        }));
+        })));
         const stateWithList =
           activeListId && agent.hits.length > 0
             ? {

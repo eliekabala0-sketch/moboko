@@ -68,7 +68,7 @@ export default async function AdminPostsPage() {
           <div className="grid gap-3 md:grid-cols-2">
             <input name="scheduled_at" type="datetime-local" className="moboko-input" />
             <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm text-[var(--muted)]">
-              <input name="notify_on_publish" type="checkbox" />
+              <input name="notify_on_publish" type="checkbox" defaultChecked />
               Envoyer une notification Push a la publication
             </label>
           </div>
@@ -98,7 +98,7 @@ export default async function AdminPostsPage() {
                   <form action={publishPostAction} className="mt-3 flex flex-wrap items-center gap-3">
                     <input type="hidden" name="id" value={post.id} />
                     <label className="flex items-center gap-2 text-xs text-[var(--muted)]">
-                      <input name="notify" type="checkbox" defaultChecked={Boolean(post.notify_on_publish)} />
+                      <input name="notify" type="checkbox" defaultChecked={Boolean(post.notify_on_publish) || post.post_type === "announcement" || post.post_type === "mass_message"} />
                       Notifier
                     </label>
                     <button className="rounded-full border border-[var(--border-strong)] px-3 py-1.5 text-xs font-semibold">

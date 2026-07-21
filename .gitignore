@@ -3,5 +3,6 @@ node_modules
 !.secrets/.gitkeep
 scripts/audio-import/reports/
 scripts/audio-import/temp/
+scripts/sermons/reports/
 supabase/.temp/
 supabase/supabase/

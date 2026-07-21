@@ -25,8 +25,8 @@ export type CheckoutRequest = {
 };
 
 export type CheckoutResult =
-  | { ok: true; provider: PaymentProviderName; externalId: string; checkoutUrl: string }
-  | { ok: false; error: "provider_not_configured" | "provider_error" | "duplicate_checkout"; detail?: string };
+  | { ok: true; provider: PaymentProviderName; externalId: string; checkoutUrl: string; providerMs?: number }
+  | { ok: false; error: "provider_not_configured" | "provider_error" | "duplicate_checkout"; detail?: string; providerMs?: number };
 
 export type PaymentWebhookEvent =
   | {
@@ -171,12 +171,15 @@ function verifyOptionalWebhookSignature(raw: string, request: Request): boolean 
 }
 
 export async function createPaymentCheckout(req: CheckoutRequest): Promise<CheckoutResult> {
+  const startedAt = Date.now();
   const baseUrl = providerBaseUrl();
   const apiKey = providerApiKey();
   const apiSecret = providerApiSecret();
   const appId = providerAppId();
   const appSlug = providerAppSlug();
-  if (!baseUrl || !apiKey || !apiSecret || !appId || !appSlug) return { ok: false, error: "provider_not_configured" };
+  if (!baseUrl || !apiKey || !apiSecret || !appId || !appSlug) {
+    return { ok: false, error: "provider_not_configured", providerMs: Date.now() - startedAt };
+  }
 
   try {
     const res = await fetch(baseUrl, {
@@ -233,7 +236,7 @@ export async function createPaymentCheckout(req: CheckoutRequest): Promise<Check
     const data: unknown = await res.json().catch(() => ({}));
     if (!res.ok || !isRecord(data)) {
       const detail = isRecord(data) ? JSON.stringify(data).slice(0, 600) : "";
-      return { ok: false, error: "provider_error", detail: `HTTP ${res.status}${detail ? ` ${detail}` : ""}` };
+      return { ok: false, error: "provider_error", detail: `HTTP ${res.status}${detail ? ` ${detail}` : ""}`, providerMs: Date.now() - startedAt };
     }
     const providerPayment =
       isRecord(data.provider_response) && isRecord(data.provider_response.payment)
@@ -247,22 +250,22 @@ export async function createPaymentCheckout(req: CheckoutRequest): Promise<Check
       req.transactionId;
     const echoedAmount = responseAmount(data, providerPayment);
     if (echoedAmount !== null && echoedAmount !== req.amount) {
-      return { ok: false, error: "provider_error", detail: "montant_incoherent" };
+      return { ok: false, error: "provider_error", detail: "montant_incoherent", providerMs: Date.now() - startedAt };
     }
     const echoedCurrency = responseCurrency(data, providerPayment);
     if (echoedCurrency && echoedCurrency !== req.currency.toUpperCase()) {
-      return { ok: false, error: "provider_error", detail: "devise_incoherente" };
+      return { ok: false, error: "provider_error", detail: "devise_incoherente", providerMs: Date.now() - startedAt };
     }
     const checkoutUrl = asString(data.checkout_url) || asString(data.url);
     if (!checkoutUrl && data.success === true && asString(data.status) === "pending") {
-      return { ok: true, provider: "badiboss_pay", externalId, checkoutUrl: req.successUrl };
+      return { ok: true, provider: "badiboss_pay", externalId, checkoutUrl: req.successUrl, providerMs: Date.now() - startedAt };
     }
     if (!checkoutUrl) {
-      return { ok: false, error: "provider_error", detail: `checkout_url_absente ${JSON.stringify(data).slice(0, 600)}` };
+      return { ok: false, error: "provider_error", detail: `checkout_url_absente ${JSON.stringify(data).slice(0, 600)}`, providerMs: Date.now() - startedAt };
     }
-    return { ok: true, provider: "badiboss_pay", externalId, checkoutUrl };
+    return { ok: true, provider: "badiboss_pay", externalId, checkoutUrl, providerMs: Date.now() - startedAt };
   } catch (e) {
-    return { ok: false, error: "provider_error", detail: e instanceof Error ? e.message : String(e) };
+    return { ok: false, error: "provider_error", detail: e instanceof Error ? e.message : String(e), providerMs: Date.now() - startedAt };
   }
 }
 

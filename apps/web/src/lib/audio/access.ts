@@ -6,7 +6,17 @@ export type AudioAccess = Record<AudioRight, boolean> & {
   subscriptionActive: boolean;
   planKey: string | null;
   overrideApplied: boolean;
+  freeApplied: boolean;
+  freeExcerptSeconds: number | null;
+  accessSource: "none" | "subscription" | "admin" | "override" | "free";
   admin: boolean;
+};
+
+export type AudioAccessItem = {
+  id?: string | null;
+  access_policy?: string | null;
+  free_excerpt_seconds?: number | null;
+  free_monthly_play_limit?: number | null;
 };
 
 const RIGHTS: AudioRight[] = [
@@ -32,12 +42,54 @@ function emptyAccess(): AudioAccess {
     subscriptionActive: false,
     planKey: null,
     overrideApplied: false,
+    freeApplied: false,
+    freeExcerptSeconds: null,
+    accessSource: "none",
     admin: false,
   };
 }
 
-export async function getAudioAccess(admin: SupabaseClient, user: User | null): Promise<AudioAccess> {
-  if (!user) return emptyAccess();
+async function getFreeAudioSettings(admin: SupabaseClient) {
+  const { data, error } = await admin
+    .from("audio_access_settings")
+    .select("free_streaming_enabled, free_streaming_monthly_limit, free_offline_in_app, free_full_download, free_audio_search, free_excerpt_seconds")
+    .eq("id", true)
+    .maybeSingle();
+  if (error || !data) {
+    return {
+      free_streaming_enabled: false,
+      free_streaming_monthly_limit: null as number | null,
+      free_offline_in_app: false,
+      free_full_download: false,
+      free_audio_search: false,
+      free_excerpt_seconds: 0,
+    };
+  }
+  return data;
+}
+
+async function applyFreeAudioAccess(admin: SupabaseClient, access: AudioAccess, audio?: AudioAccessItem | null) {
+  if (!audio) return access;
+  const policy = audio.access_policy ?? "subscription";
+  if (policy === "subscription" || policy === "unavailable") return access;
+  const settings = await getFreeAudioSettings(admin);
+  const excerptSeconds = Number(audio.free_excerpt_seconds || settings.free_excerpt_seconds || 0);
+  const fullFree = policy === "free";
+  const excerptFree = policy === "excerpt" && excerptSeconds > 0;
+  if (!fullFree && !excerptFree) return access;
+  access.freeApplied = true;
+  access.accessSource = "free";
+  access.planKey = fullFree ? "free_audio" : "free_excerpt";
+  access.freeExcerptSeconds = excerptFree ? excerptSeconds : null;
+  access.audio_streaming = Boolean(settings.free_streaming_enabled);
+  access.audio_offline_in_app = fullFree && Boolean(settings.free_offline_in_app);
+  access.audio_full_download = fullFree && Boolean(settings.free_full_download);
+  access.audio_search = fullFree && Boolean(settings.free_audio_search);
+  return access;
+}
+
+export async function getAudioAccess(admin: SupabaseClient, user: User | null, audio?: AudioAccessItem | null): Promise<AudioAccess> {
+  if (!user) return applyFreeAudioAccess(admin, emptyAccess(), audio);
 
   const { data: profile } = await admin
     .from("profiles")
@@ -55,6 +107,9 @@ export async function getAudioAccess(admin: SupabaseClient, user: User | null): 
       subscriptionActive: true,
       planKey: isAdmin ? "admin" : "free_access",
       overrideApplied: false,
+      freeApplied: false,
+      freeExcerptSeconds: null,
+      accessSource: isAdmin ? "admin" : "subscription",
       admin: isAdmin,
     };
   }
@@ -80,6 +135,7 @@ export async function getAudioAccess(admin: SupabaseClient, user: User | null): 
     if (!plan) continue;
     access.subscriptionActive = true;
     access.planKey = planKey;
+    access.accessSource = "subscription";
     for (const right of RIGHTS) {
       access[right] = Boolean(plan[right]);
     }
@@ -96,10 +152,14 @@ export async function getAudioAccess(admin: SupabaseClient, user: User | null): 
       if (override[right] !== null && override[right] !== undefined) {
         access[right] = Boolean(override[right]);
         access.overrideApplied = true;
+        access.accessSource = "override";
       }
     }
   }
 
+  if (!access.subscriptionActive && !access.overrideApplied) {
+    return applyFreeAudioAccess(admin, access, audio);
+  }
   return access;
 }
 

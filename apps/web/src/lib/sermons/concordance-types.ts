@@ -13,6 +13,7 @@ export type ConcordanceHit = {
   prev_paragraph_text: string | null;
   next_paragraph_number: number | null;
   next_paragraph_text: string | null;
+  linked_audio_id?: string | null;
   _source?: "chat" | "sermons-search";
   _query?: string;
   _conversation_id?: string;
@@ -102,6 +103,7 @@ export function coerceConcordanceHits(raw: unknown): ConcordanceHit[] {
       prev_paragraph_text: prevText,
       next_paragraph_number,
       next_paragraph_text: nextText,
+      linked_audio_id: typeof o.linked_audio_id === "string" ? o.linked_audio_id : null,
       _source:
         o._source === "chat" || o._source === "sermons-search"
           ? (o._source as "chat" | "sermons-search")

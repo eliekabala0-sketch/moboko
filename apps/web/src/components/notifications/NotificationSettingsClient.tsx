@@ -109,9 +109,9 @@ export function NotificationSettingsClient() {
   return (
     <div className="mt-8 space-y-4">
       <section className="moboko-card p-5">
-        <h2 className="font-semibold text-[var(--foreground)]">Notifications système</h2>
+        <h2 className="font-semibold text-[var(--foreground)]">Notifications systeme</h2>
         <p className="mt-2 text-sm text-[var(--muted)]">
-          Activez les notifications de Moboko sur cet appareil pour recevoir les annonces importantes.
+          Activez les notifications sur cet appareil pour recevoir les annonces et messages importants meme hors de l&apos;application.
         </p>
         <button onClick={() => void enablePush()} className="moboko-btn-primary mt-4 px-5 py-2 text-sm">
           Activer sur cet appareil
@@ -120,7 +120,7 @@ export function NotificationSettingsClient() {
       </section>
 
       <section className="moboko-card p-5">
-        <h2 className="font-semibold text-[var(--foreground)]">Préférences</h2>
+        <h2 className="font-semibold text-[var(--foreground)]">Preferences</h2>
         <div className="mt-4 space-y-3">
           {LABELS.map(([key, label]) => (
             <label key={key} className="flex items-center justify-between gap-4 rounded-lg border border-[var(--border)] p-3 text-sm">

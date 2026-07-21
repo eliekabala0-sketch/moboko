@@ -138,6 +138,7 @@ function parseCheckout(
 }
 
 export async function POST(request: Request) {
+  const routeStarted = Date.now();
   const admin = createSupabaseServiceClient();
   if (!admin) return NextResponse.json({ error: "service_supabase_manquant" }, { status: 500 });
 
@@ -160,6 +161,7 @@ export async function POST(request: Request) {
   }
   if (!parsed) return NextResponse.json({ error: "purpose_invalide" }, { status: 400 });
 
+  const profileStarted = Date.now();
   const payment = await paymentDetailsFromProfile({
     admin,
     userId: user.id,
@@ -167,6 +169,7 @@ export async function POST(request: Request) {
     userPhone: user.phone ?? null,
     input: parsed.payment,
   });
+  const profileMs = Date.now() - profileStarted;
   if (!payment) {
     return NextResponse.json(
       { error: "numero_paiement_requis", message: "Ajoutez un numero Mobile Money dans votre profil ou indiquez un autre numero." },
@@ -174,6 +177,7 @@ export async function POST(request: Request) {
     );
   }
 
+  const checkoutStarted = Date.now();
   const checkout = await createBillingCheckout({
     admin,
     userId: user.id,
@@ -189,6 +193,7 @@ export async function POST(request: Request) {
     cancelUrl: parsed.returnUrl ? `${parsed.returnUrl}?status=cancelled` : null,
     siteUrl: getSiteUrl(),
   });
+  const routeMs = Date.now() - routeStarted;
   if (!checkout.ok) {
     const status =
       checkout.error === "provider_not_configured"
@@ -204,8 +209,30 @@ export async function POST(request: Request) {
           : checkout.error === "provider_not_configured"
             ? "Paiement en ligne indisponible pour le moment."
             : "Le paiement n'a pas pu etre lance. Reessayez plus tard.";
-    return NextResponse.json({ error: checkout.error, message }, { status });
+    return NextResponse.json(
+      {
+        error: checkout.error,
+        message,
+        timings: {
+          profile_ms: profileMs,
+          checkout_ms: Date.now() - checkoutStarted,
+          route_total_ms: routeMs,
+          ...(checkout.timings ?? {}),
+        },
+      },
+      { status },
+    );
   }
 
-  return NextResponse.json({ ok: true, checkout_url: checkout.checkoutUrl });
+  return NextResponse.json({
+    ok: true,
+    checkout_url: checkout.checkoutUrl,
+    message: "Demande envoyee, veuillez verifier votre telephone.",
+    timings: {
+      profile_ms: profileMs,
+      checkout_ms: Date.now() - checkoutStarted,
+      route_total_ms: routeMs,
+      ...(checkout.timings ?? {}),
+    },
+  });
 }
