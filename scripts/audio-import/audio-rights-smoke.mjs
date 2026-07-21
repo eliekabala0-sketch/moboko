@@ -61,6 +61,7 @@ const { data: sermon } = await admin
   .eq("streaming_enabled", true)
   .eq("offline_enabled", true)
   .eq("full_download_enabled", true)
+  .like("storage_path", "%.manifest.json")
   .limit(1)
   .single();
 if (!sermon) throw new Error("Aucun sermon pilote actif");
@@ -113,7 +114,8 @@ try {
 
   const stream = await postJson(`/api/audio/${sermon.id}/stream`, token);
   if (stream.body.url) {
-    const range = await fetch(stream.body.url, { headers: { Range: "bytes=0-1023" } });
+    const streamUrl = stream.body.url.startsWith("http") ? stream.body.url : `${siteUrl}${stream.body.url}`;
+    const range = await fetch(streamUrl, { headers: { Range: "bytes=0-1023" } });
     console.log(`signed_stream_range=${range.status} bytes=${range.headers.get("content-length") ?? ""}`);
   }
 
