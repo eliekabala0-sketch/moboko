@@ -225,11 +225,113 @@ async function main() {
   console.log("Dossier :", dir);
   console.log("Fichiers .txt :", files.length);
 
+  if (env.MOBOKO_SERMON_BULK_IMPORT === "1") {
+    const rows = files.map((file) => parseSermonFile(join(dir, file), file));
+    const sermonPayload = (row) => ({
+      slug: row.slug,
+      title: row.title,
+      preached_on: row.preached_on,
+      year: row.year,
+      location: row.location,
+      country: row.country,
+      city: row.city,
+      series: row.series,
+      source_file: row.source_file,
+      content_plain: row.content_plain,
+      paragraph_count: row.paragraph_count,
+      language: row.language,
+      is_published: row.is_published,
+    });
+
+    if (env.MOBOKO_SERMON_SKIP_METADATA !== "1") {
+      for (let i = 0; i < rows.length; i += 50) {
+        const { error } = await supabase
+          .from("sermons")
+          .upsert(rows.slice(i, i + 50).map(sermonPayload), { onConflict: "source_file", ignoreDuplicates: false });
+        if (error) throw error;
+        console.log("sermons", Math.min(i + 50, rows.length), "/", rows.length);
+      }
+    } else {
+      console.log("métadonnées sermons déjà appliquées");
+    }
+
+    const sermonIds = new Map();
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
+        .from("sermons")
+        .select("id,source_file")
+        .range(from, from + 999);
+      if (error) throw error;
+      for (const sermon of data ?? []) sermonIds.set(sermon.source_file, sermon.id);
+      if (!data || data.length < 1000) break;
+    }
+    console.log("correspondances sermons", sermonIds.size);
+
+    const baselineDir = env.MOBOKO_SERMON_BASELINE_DIR?.trim() || defaultDir;
+    const compact = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
+    let paragraphCount = 0;
+    let completedJobs = 0;
+    let affectedJobs = 0;
+    let jobCursor = 0;
+    const paragraphConcurrency = Math.max(1, Math.min(4, Number.parseInt(env.MOBOKO_SERMON_PARAGRAPH_CONCURRENCY ?? "3", 10) || 3));
+    const upsertParagraphChunk = async (chunk, sourceFile) => {
+      const { error } = await supabase
+        .from("sermon_paragraphs")
+        .upsert(chunk, { onConflict: "sermon_id,paragraph_number", ignoreDuplicates: false });
+      if (!error) {
+        paragraphCount += chunk.length;
+        return;
+      }
+      if (error.code === "57014" && chunk.length > 1) {
+        const middle = Math.ceil(chunk.length / 2);
+        await upsertParagraphChunk(chunk.slice(0, middle), sourceFile);
+        await upsertParagraphChunk(chunk.slice(middle), sourceFile);
+        return;
+      }
+      throw new Error(`${sourceFile}: ${error.message}`);
+    };
+    await Promise.all(Array.from({ length: paragraphConcurrency }, async () => {
+      while (jobCursor < rows.length) {
+        const index = jobCursor;
+        jobCursor += 1;
+        const row = rows[index];
+        const sermonId = sermonIds.get(row.source_file);
+        if (!sermonId) throw new Error(`Sermon sans identifiant après upsert: ${row.source_file}`);
+        const baseline = parseSermonFile(join(baselineDir, row.source_file), row.source_file);
+        const before = new Map(baseline.paragraphs.map((paragraph) => [paragraph.paragraph_number, compact(paragraph.paragraph_text)]));
+        const changed = row.paragraphs
+          .filter((paragraph) => compact(paragraph.paragraph_text) !== before.get(paragraph.paragraph_number))
+          .map((paragraph) => ({
+            sermon_id: sermonId,
+            paragraph_number: paragraph.paragraph_number,
+            paragraph_text: paragraph.paragraph_text,
+            normalized_text: normalizeForSearch(paragraph.paragraph_text),
+          }));
+        if (changed.length) affectedJobs += 1;
+        for (let i = 0; i < changed.length; i += 20) {
+          const chunk = changed.slice(i, i + 20);
+          await upsertParagraphChunk(chunk, row.source_file);
+        }
+        completedJobs += 1;
+        if (completedJobs % 100 === 0) console.log("sermons traités", completedJobs, "/", rows.length, "affectés", affectedJobs, "paragraphes", paragraphCount);
+      }
+    }));
+    await supabase.from("library_import_jobs").insert({
+      source_type: "sermon_clean_txt_bulk",
+      source_path: dir,
+      imported_count: rows.length,
+      failed_count: 0,
+      notes: `paragraphs=${paragraphCount}`,
+    });
+    console.log("Terminé — importés :", rows.length, "paragraphes :", paragraphCount, "échecs : 0");
+    return;
+  }
+
   let imported = 0;
   let failed = 0;
   const errors = [];
 
-  for (const f of files) {
+  const importOne = async (f) => {
     const full = join(dir, f);
     try {
       const row = parseSermonFile(full, f);
@@ -260,8 +362,6 @@ async function main() {
       if (upErr) throw upErr;
       const sermonId = upserted.id;
 
-      await supabase.from("sermon_paragraphs").delete().eq("sermon_id", sermonId);
-
       if (row.paragraphs.length > 0) {
         const chunkSize = 200;
         for (let i = 0; i < row.paragraphs.length; i += chunkSize) {
@@ -273,7 +373,10 @@ async function main() {
           }));
           const { error: insErr } = await supabase
             .from("sermon_paragraphs")
-            .insert(chunk);
+            .upsert(chunk, {
+              onConflict: "sermon_id,paragraph_number",
+              ignoreDuplicates: false,
+            });
           if (insErr) throw insErr;
         }
       }
@@ -284,7 +387,22 @@ async function main() {
       failed++;
       errors.push({ file: f, message: e?.message ?? String(e) });
     }
-  }
+  };
+
+  const concurrency = Math.max(
+    1,
+    Math.min(16, Number.parseInt(env.MOBOKO_SERMON_IMPORT_CONCURRENCY ?? "8", 10) || 8),
+  );
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: concurrency }, async () => {
+      while (cursor < files.length) {
+        const index = cursor;
+        cursor += 1;
+        await importOne(files[index]);
+      }
+    }),
+  );
 
   let notes =
     errors.length > 0

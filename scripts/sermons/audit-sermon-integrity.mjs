@@ -243,7 +243,7 @@ async function main() {
         .select("sermon_id, paragraph_number, paragraph_text")
         .order("sermon_id", { ascending: true })
         .order("paragraph_number", { ascending: true }),
-    250,
+    1000,
   );
   const paragraphsBySermon = new Map();
   for (const p of paragraphs) {

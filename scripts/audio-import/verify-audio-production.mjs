@@ -92,6 +92,27 @@ for (const item of activeAudio ?? []) {
   );
 }
 
+const { data: linkedAudio, count: linkedAudioCount, error: linkedAudioError } = await admin
+  .from("audio_items")
+  .select("id, title, sermon_id, sermons!inner(slug, title)", { count: "exact" })
+  .eq("category", "sermon")
+  .eq("is_active", true)
+  .eq("streaming_enabled", true)
+  .not("sermon_id", "is", null)
+  .limit(5);
+console.log(`linked_streamable_sermon_audio=${linkedAudioError ? `ERROR ${linkedAudioError.message}` : linkedAudioCount ?? 0}`);
+for (const item of linkedAudio ?? []) {
+  const sermon = Array.isArray(item.sermons) ? item.sermons[0] : item.sermons;
+  console.log(`linked_audio_sample=${item.title}|slug=${sermon?.slug ?? ""}|sermon=${sermon?.title ?? ""}`);
+}
+
+const { count: prayerSermonLinks, error: prayerLinkError } = await admin
+  .from("audio_items")
+  .select("id", { count: "exact", head: true })
+  .eq("category", "prayer_line")
+  .not("sermon_id", "is", null);
+console.log(`prayer_lines_linked_to_sermons=${prayerLinkError ? `ERROR ${prayerLinkError.message}` : prayerSermonLinks ?? 0}`);
+
 const { data: statusRows, error: statusError } = await admin
   .from("audio_items")
   .select("category, import_status, is_active, storage_path");

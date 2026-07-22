@@ -1,6 +1,7 @@
 ﻿import { Masthead } from "@/components/layout/Masthead";
 import { ProjectionReader } from "@/components/projection/ProjectionReader";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { buildSermonProjectionUnits } from "@/lib/sermons/projection-segments";
 import Link from "next/link";
 
 export const metadata = {
@@ -75,6 +76,14 @@ export default async function ProjectionPage({ searchParams }: Props) {
         number: p.paragraph_number as number,
         text: p.paragraph_text as string,
       }));
+      const units = buildSermonProjectionUnits(
+        rows.map((row) => ({ paragraph_number: row.number, paragraph_text: row.text })),
+      );
+      const wantedIndex = resolveStartIndex(rows, paragraph);
+      const wantedParagraph = rows[wantedIndex]?.number;
+      const initialIndex = wantedParagraph
+        ? Math.max(0, units.findIndex((unit) => unit.paragraphNumber === wantedParagraph))
+        : 0;
       const metaLine = [
         sermon.preached_on,
         sermon.year,
@@ -90,12 +99,8 @@ export default async function ProjectionPage({ searchParams }: Props) {
           backHref="/projection"
           backLabel="Projection"
           startHref={`/projection?kind=message&slug=${encodeURIComponent(sermon.slug as string)}`}
-          initialIndex={resolveStartIndex(rows, paragraph)}
-          units={rows.map((p) => ({
-            id: String(p.number),
-            label: `Paragraphe ${p.number}`,
-            text: p.text,
-          }))}
+          initialIndex={initialIndex}
+          units={units}
         />
       );
     }

@@ -1,4 +1,5 @@
 import { ProjectionReader } from "@/components/projection/ProjectionReader";
+import { buildSermonProjectionUnits } from "@/lib/sermons/projection-segments";
 
 export type ProjectionParagraph = {
   paragraph_number: number;
@@ -20,6 +21,11 @@ export function SermonProjectionView({
   paragraphs,
   initialIndex,
 }: Props) {
+  const units = buildSermonProjectionUnits(paragraphs);
+  const initialParagraph = paragraphs[initialIndex]?.paragraph_number;
+  const segmentedInitialIndex = initialParagraph
+    ? Math.max(0, units.findIndex((unit) => unit.paragraphNumber === initialParagraph))
+    : 0;
   return (
     <ProjectionReader
       title={sermonTitle}
@@ -27,12 +33,8 @@ export function SermonProjectionView({
       backHref={`/sermons/${encodeURIComponent(slug)}`}
       backLabel="Lecture"
       startHref={`/sermons/${encodeURIComponent(slug)}/project`}
-      initialIndex={initialIndex}
-      units={paragraphs.map((p) => ({
-        id: String(p.paragraph_number),
-        label: `Paragraphe ${p.paragraph_number}`,
-        text: p.paragraph_text,
-      }))}
+      initialIndex={segmentedInitialIndex}
+      units={units}
     />
   );
 }
