@@ -145,7 +145,7 @@ create index if not exists audio_items_sermon_id_idx
 create index if not exists audio_items_checksum_idx
   on public.audio_items (checksum_sha256) where checksum_sha256 is not null;
 create index if not exists audio_items_normalized_title_trgm_idx
-  on public.audio_items using gin (normalized_title gin_trgm_ops);
+  on public.audio_items using gin (normalized_title extensions.gin_trgm_ops);
 create index if not exists audio_items_import_status_idx
   on public.audio_items (import_status, category, updated_at desc);
 create index if not exists audio_import_events_run_idx
@@ -153,7 +153,7 @@ create index if not exists audio_import_events_run_idx
 create index if not exists audio_transcript_segments_audio_start_idx
   on public.audio_transcript_segments (audio_id, start_seconds);
 create index if not exists audio_transcript_segments_text_trgm_idx
-  on public.audio_transcript_segments using gin (text gin_trgm_ops);
+  on public.audio_transcript_segments using gin (text extensions.gin_trgm_ops);
 
 drop trigger if exists audio_items_updated_at on public.audio_items;
 create trigger audio_items_updated_at

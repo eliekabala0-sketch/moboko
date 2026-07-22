@@ -159,7 +159,9 @@ async function importBible(supabase, file) {
   const invalidPassages = parsed.passages.filter((passage) => passage.validation_status !== "valid" || !passage.text?.trim());
   if (invalidPassages.length) throw new Error(`Import Bible refusé: ${invalidPassages.length} passage(s) invalide(s).`);
   const sourceName = version.source_file || path.basename(version.source_file_path);
-  const sourcePath = await uploadSource(supabase, "bibles", version.source_file_path, sourceName);
+  const sourcePath = process.argv.includes("--skip-source-upload")
+    ? `${STORAGE_BUCKET}/bibles/${sourceName}`
+    : await uploadSource(supabase, "bibles", version.source_file_path, sourceName);
   const richBible = await hasTable(supabase, "bible_versions");
   const wordsOfJesusColumn = richBible && (await hasColumn(supabase, "bible_passages", "has_words_of_jesus"));
   const report = {

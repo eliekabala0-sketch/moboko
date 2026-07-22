@@ -4,16 +4,16 @@ create extension if not exists unaccent with schema extensions;
 create extension if not exists pg_trgm with schema extensions;
 
 create index if not exists sermons_title_trgm_idx
-  on public.sermons using gin (title gin_trgm_ops);
+  on public.sermons using gin (title extensions.gin_trgm_ops);
 
 create index if not exists sermons_location_trgm_idx
-  on public.sermons using gin (location gin_trgm_ops);
+  on public.sermons using gin (location extensions.gin_trgm_ops);
 
 create index if not exists sermons_published_date_idx
   on public.sermons (is_published, preached_on asc nulls last, year asc nulls last);
 
 create index if not exists sermon_paragraphs_normalized_trgm_idx
-  on public.sermon_paragraphs using gin (normalized_text gin_trgm_ops);
+  on public.sermon_paragraphs using gin (normalized_text extensions.gin_trgm_ops);
 
 create index if not exists sermon_paragraphs_sermon_num_cover_idx
   on public.sermon_paragraphs (sermon_id, paragraph_number)

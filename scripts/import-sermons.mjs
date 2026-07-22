@@ -221,7 +221,14 @@ async function main() {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  const files = readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".txt"));
+  let files = readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".txt"));
+  const startAt = env.MOBOKO_SERMON_START_AT?.trim();
+  if (startAt) {
+    const startIndex = files.indexOf(startAt);
+    if (startIndex < 0) throw new Error(`Fichier de reprise introuvable: ${startAt}`);
+    files = files.slice(startIndex);
+    console.log("Reprise à partir de :", startAt);
+  }
   console.log("Dossier :", dir);
   console.log("Fichiers .txt :", files.length);
 
@@ -274,7 +281,7 @@ async function main() {
     let affectedJobs = 0;
     let jobCursor = 0;
     const paragraphConcurrency = Math.max(1, Math.min(4, Number.parseInt(env.MOBOKO_SERMON_PARAGRAPH_CONCURRENCY ?? "3", 10) || 3));
-    const upsertParagraphChunk = async (chunk, sourceFile) => {
+    const upsertParagraphChunk = async (chunk, sourceFile, attempt = 0) => {
       const { error } = await supabase
         .from("sermon_paragraphs")
         .upsert(chunk, { onConflict: "sermon_id,paragraph_number", ignoreDuplicates: false });
@@ -287,6 +294,35 @@ async function main() {
         await upsertParagraphChunk(chunk.slice(0, middle), sourceFile);
         await upsertParagraphChunk(chunk.slice(middle), sourceFile);
         return;
+      }
+      if (error.code === "57014" && attempt < 5) {
+        const delay = 1000 * 2 ** attempt;
+        console.warn(`reprise timeout ${attempt + 1}/5: ${sourceFile} (${delay} ms)`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        await upsertParagraphChunk(chunk, sourceFile, attempt + 1);
+        return;
+      }
+      if (attempt < 5 && /fetch failed|network|ECONNRESET|ETIMEDOUT/i.test(error.message ?? "")) {
+        const delay = 500 * 2 ** attempt;
+        console.warn(`reprise réseau ${attempt + 1}/5: ${sourceFile} (${delay} ms)`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        await upsertParagraphChunk(chunk, sourceFile, attempt + 1);
+        return;
+      }
+      if (error.code === "57014" && chunk.length === 1) {
+        const paragraph = chunk[0];
+        const { error: rpcError } = await supabase.rpc("moboko_upsert_complete_sermon_paragraph", {
+          p_sermon_id: paragraph.sermon_id,
+          p_paragraph_number: paragraph.paragraph_number,
+          p_paragraph_text: paragraph.paragraph_text,
+          p_normalized_text: paragraph.normalized_text,
+        });
+        if (!rpcError) {
+          paragraphCount += 1;
+          console.warn(`upsert prolongé: ${sourceFile} §${paragraph.paragraph_number}`);
+          return;
+        }
+        throw new Error(`${sourceFile}: ${rpcError.message}`);
       }
       throw new Error(`${sourceFile}: ${error.message}`);
     };

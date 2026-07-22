@@ -38,7 +38,7 @@ async function main() {
   for (let start = 0; ; start += 1000) {
     const { data, error } = await supabase
       .from("bible_passages")
-      .select("book_name,book,chapter,verse,text,validation_status")
+      .select("book_name,book,chapter,verse,text,validation_status,has_words_of_jesus")
       .eq("translation", local.version.abbreviation)
       .order("book_number", { ascending: true })
       .order("chapter", { ascending: true })
@@ -53,6 +53,16 @@ async function main() {
   const missing = [...localByRef.keys()].filter((ref) => !remoteByRef.has(ref));
   const extra = [...remoteByRef.keys()].filter((ref) => !localByRef.has(ref));
   const different = [...localByRef].filter(([ref, row]) => remoteByRef.has(ref) && remoteByRef.get(ref).text !== row.text);
+  const differentWordsOfJesus = [...localByRef].filter(
+    ([ref, row]) => remoteByRef.has(ref) && Boolean(remoteByRef.get(ref).has_words_of_jesus) !== Boolean(row.has_words_of_jesus),
+  );
+  const sampleRefs = ["Matthieu.3.15", "Matthieu.3.16", "Jean.3.16", "Jean.3.17"];
+  const wordsOfJesusSamples = sampleRefs.map((ref) => ({
+    ref: ref.replaceAll(".", " "),
+    local: Boolean(localByRef.get(ref)?.has_words_of_jesus),
+    production: Boolean(remoteByRef.get(ref)?.has_words_of_jesus),
+    matches: Boolean(localByRef.get(ref)?.has_words_of_jesus) === Boolean(remoteByRef.get(ref)?.has_words_of_jesus),
+  }));
   const report = {
     checked_at: new Date().toISOString(),
     translation: local.version.abbreviation,
@@ -65,8 +75,10 @@ async function main() {
     corrupt_production_texts: remote.filter((row) => corrupt(row.text)).map(key),
     words_of_jesus_column: !wordsOfJesusError,
     words_of_jesus_verses: wordsOfJesusError ? null : (wordsOfJesusCount ?? 0),
+    different_words_of_jesus: differentWordsOfJesus.length,
+    words_of_jesus_samples: wordsOfJesusSamples,
     words_of_jesus_schema_error: wordsOfJesusError?.message ?? null,
-    complete: missing.length === 0 && different.length === 0 && remoteByRef.size >= localByRef.size,
+    complete: missing.length === 0 && different.length === 0 && differentWordsOfJesus.length === 0 && remoteByRef.size >= localByRef.size,
   };
   console.log(JSON.stringify(report, null, 2));
   if (!report.complete || report.corrupt_production_texts.length) process.exitCode = 2;

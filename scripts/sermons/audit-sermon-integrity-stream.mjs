@@ -197,28 +197,43 @@ async function main() {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   const files = readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".txt")).sort((a, b) => a.localeCompare(b));
-  const { data: sermons, error } = await retry("sermons", () =>
-    supabase.from("sermons").select("id, source_file, title, paragraph_count").order("source_file", { ascending: true }).limit(5000),
-  );
-  if (error) throw error;
-  const sermonBySource = new Map((sermons ?? []).map((s) => [s.source_file, s]));
+  const sermons = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await retry(`sermons ${from}`, () =>
+      supabase
+        .from("sermons")
+        .select("id, source_file, title, paragraph_count")
+        .order("source_file", { ascending: true })
+        .range(from, from + 999),
+    );
+    if (error) throw error;
+    sermons.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
+  const sermonBySource = new Map(sermons.map((s) => [s.source_file, s]));
   const comparisons = [];
   let processed = 0;
-  for (const file of files) {
-    const source = parseSource(join(dir, file), file);
-    const sermon = sermonBySource.get(file);
-    const dbRows = sermon ? await fetchParagraphs(supabase, sermon.id) : [];
-    const comparison = compare(source, sermon, dbRows);
-    comparisons.push(comparison);
-    processed += 1;
-    if (processed % 50 === 0) console.log(`progress=${processed}/${files.length}`);
-  }
+  let cursor = 0;
+  const concurrency = Math.max(1, Math.min(8, Number.parseInt(process.env.MOBOKO_SERMON_AUDIT_CONCURRENCY ?? "4", 10) || 4));
+  await Promise.all(Array.from({ length: concurrency }, async () => {
+    while (cursor < files.length) {
+      const index = cursor;
+      cursor += 1;
+      const file = files[index];
+      const source = parseSource(join(dir, file), file);
+      const sermon = sermonBySource.get(file);
+      const dbRows = sermon ? await fetchParagraphs(supabase, sermon.id) : [];
+      comparisons.push(compare(source, sermon, dbRows));
+      processed += 1;
+      if (processed % 50 === 0) console.log(`progress=${processed}/${files.length}`);
+    }
+  }));
   const affected = comparisons.filter((c) => c.issues.length || c.sourceDuplicates.length || c.dbDuplicates.length);
   const report = {
     generatedAt: new Date().toISOString(),
     sourceDir: dir,
     sourceFiles: files.length,
-    sermonsInDb: sermons?.length ?? 0,
+    sermonsInDb: sermons.length,
     sourceParagraphs: comparisons.reduce((n, c) => n + c.sourceParagraphs, 0),
     dbParagraphs: comparisons.reduce((n, c) => n + c.dbParagraphs, 0),
     affectedSermons: affected.length,

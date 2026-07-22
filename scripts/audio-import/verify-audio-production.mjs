@@ -132,8 +132,21 @@ if (statusError) {
   for (const [key, value] of chunked) console.log(`audio_chunked ${key}=${value}`);
 }
 
-for (const url of ["/audio", "/admin/audio", "/api/audio?category=sermon&limit=3", "/api/audio?category=prayer_line&limit=3"]) {
+for (const url of [
+  "/audio",
+  "/admin/audio",
+  "/api/audio?category=sermon&limit=3",
+  "/api/audio?category=sermon&q=Adoption&limit=3",
+  "/api/audio?category=prayer_line&limit=3",
+]) {
   const res = await fetch(`${siteUrl}${url}`);
   const text = await res.text();
   console.log(`http ${url}=${res.status} length=${text.length}`);
+  if (url.includes("q=Adoption")) {
+    const body = JSON.parse(text);
+    const titles = (body.results ?? []).map((item) => item.title);
+    const found = titles.some((title) => /adoption/i.test(title));
+    console.log(`audio_search Adoption=${found ? "OK" : "ERROR"} results=${titles.length} titles=${titles.join("|")}`);
+    if (!res.ok || !found) process.exitCode = 2;
+  }
 }
