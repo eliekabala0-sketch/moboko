@@ -5,7 +5,10 @@ scripts/audio-import/reports/
 scripts/audio-import/temp/
 scripts/sermons/reports/
 data/sermons-rebuilt/
-work/folio-screen.png
+data/folio-bible/
+data/import-ready/*.pdf-candidate.json
+tmp/pdfs/
+work/*.png
 work/open-folio-export.ps1
 supabase/.temp/
 supabase/supabase/

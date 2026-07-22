@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-13T18:29:06.921Z",
+  "generated_at": "2026-07-22T10:16:38.515Z",
   "files": [
     {
       "file": "Cantique Pene Na Yo (1).pdf",
@@ -105,6 +105,10 @@
         "total_verses": 29627,
         "duplicate_refs": [],
         "anomalies": [
+          {
+            "type": "invalid_text",
+            "ref": "Genèse.27.37"
+          },
           {
             "type": "missing_chapters",
             "book": "Genèse",
@@ -284,7 +288,9 @@
             ]
           }
         ]
-      }
+      },
+      "canonical_update_blocked": true,
+      "block_reason": "The PDF extraction is less complete than the current canonical Folio extraction."
     }
   ]
 }

@@ -81,6 +81,12 @@ const BIBLE_BOOKS = [
   "R\u00e9v\u00e9lation",
 ];
 
+const BIBLE_CHAPTER_COUNTS = [
+  50, 40, 27, 36, 34, 24, 21, 4, 31, 24, 22, 25, 29, 36, 10, 13, 10, 42, 150, 31, 12, 8,
+  66, 52, 5, 48, 12, 14, 3, 9, 1, 4, 7, 3, 3, 3, 2, 14, 4, 28, 16, 24, 21, 28, 16, 16,
+  13, 6, 6, 4, 4, 5, 3, 6, 4, 3, 1, 13, 5, 5, 3, 5, 1, 1, 1, 22,
+];
+
 const BOOK_ALIASES: Record<string, string> = {
   genese: "Gen\u00e8se",
   ge: "Gen\u00e8se",
@@ -187,6 +193,17 @@ export default async function BiblePage({ searchParams }: Props) {
   const chapterIndex = chapters.findIndex((chapter) => chapter === currentChapter);
   const prevChapter = chapterIndex > 0 ? chapters[chapterIndex - 1] : null;
   const nextChapter = chapterIndex >= 0 && chapterIndex < chapters.length - 1 ? chapters[chapterIndex + 1] : null;
+  const bookIndex = books.indexOf(currentBook);
+  const previousLocation = prevChapter
+    ? { book: currentBook, chapter: prevChapter }
+    : bookIndex > 0
+      ? { book: books[bookIndex - 1], chapter: BIBLE_CHAPTER_COUNTS[bookIndex - 1] }
+      : null;
+  const nextLocation = nextChapter
+    ? { book: currentBook, chapter: nextChapter }
+    : bookIndex >= 0 && bookIndex < books.length - 1
+      ? { book: books[bookIndex + 1], chapter: 1 }
+      : null;
   const versionMeta = versions.find((version) => version.abbreviation === selectedVersion);
 
   return (
@@ -237,14 +254,14 @@ export default async function BiblePage({ searchParams }: Props) {
         </form>
 
         <div className="mt-6 flex flex-wrap gap-3">
-          {prevChapter ? (
-            <Link href={`/bible?version=${selectedVersion}&book=${encodeURIComponent(currentBook)}&chapter=${prevChapter}`} className="rounded-full border border-[var(--border-strong)] px-4 py-2 text-sm font-semibold text-[var(--foreground)]">
-              Chapitre precedent
+          {previousLocation ? (
+            <Link href={`/bible?version=${selectedVersion}&book=${encodeURIComponent(previousLocation.book)}&chapter=${previousLocation.chapter}`} className="rounded-full border border-[var(--border-strong)] px-4 py-2 text-sm font-semibold text-[var(--foreground)]">
+              Précédent · {previousLocation.book} {previousLocation.chapter}
             </Link>
           ) : null}
-          {nextChapter ? (
-            <Link href={`/bible?version=${selectedVersion}&book=${encodeURIComponent(currentBook)}&chapter=${nextChapter}`} className="rounded-full border border-[var(--border-strong)] px-4 py-2 text-sm font-semibold text-[var(--foreground)]">
-              Chapitre suivant
+          {nextLocation ? (
+            <Link href={`/bible?version=${selectedVersion}&book=${encodeURIComponent(nextLocation.book)}&chapter=${nextLocation.chapter}`} className="rounded-full border border-[var(--border-strong)] px-4 py-2 text-sm font-semibold text-[var(--foreground)]">
+              Suivant · {nextLocation.book} {nextLocation.chapter}
             </Link>
           ) : null}
           {verses.length > 0 ? (

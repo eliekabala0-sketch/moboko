@@ -57,8 +57,10 @@ async function hasTable(supabase, table) {
 async function uploadSource(supabase, kind, sourcePath, preferredName) {
   const data = fs.readFileSync(sourcePath);
   const objectPath = `${kind}/${preferredName}`;
+  const extension = path.extname(preferredName).toLowerCase();
+  const contentType = extension === ".rtf" ? "application/rtf" : extension === ".json" ? "application/json" : "application/pdf";
   const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(objectPath, data, {
-    contentType: "application/pdf",
+    contentType,
     upsert: true,
   });
   if (error) throw error;
@@ -148,8 +150,18 @@ async function importBible(supabase, file) {
   const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
   const version = parsed.version;
   const validation = parsed.validation ?? {};
-  const sourcePath = await uploadSource(supabase, "bibles", version.source_file_path, "bible-biblio-1910.pdf");
+  if (
+    version.testament_scope === "complete" &&
+    (validation.total_books !== 66 || validation.total_chapters !== 1189 || validation.total_verses < 31_100 || validation.anomalies?.length)
+  ) {
+    throw new Error("Import Bible refusé: la source déclarée complète ne passe pas les contrôles 66 livres / 1 189 chapitres / texte valide.");
+  }
+  const invalidPassages = parsed.passages.filter((passage) => passage.validation_status !== "valid" || !passage.text?.trim());
+  if (invalidPassages.length) throw new Error(`Import Bible refusé: ${invalidPassages.length} passage(s) invalide(s).`);
+  const sourceName = version.source_file || path.basename(version.source_file_path);
+  const sourcePath = await uploadSource(supabase, "bibles", version.source_file_path, sourceName);
   const richBible = await hasTable(supabase, "bible_versions");
+  const wordsOfJesusColumn = richBible && (await hasColumn(supabase, "bible_passages", "has_words_of_jesus"));
   const report = {
     ...validation,
     source_file: version.source_file,
@@ -202,6 +214,7 @@ async function importBible(supabase, file) {
       ? {
           search_text: passage.search_text ?? searchText([passage.book_name, `${passage.chapter}:${passage.verse}`, passage.text]),
           validation_status: passage.validation_status ?? "valid",
+          ...(wordsOfJesusColumn ? { has_words_of_jesus: passage.has_words_of_jesus === true } : {}),
         }
       : {}),
   }));
@@ -209,7 +222,10 @@ async function importBible(supabase, file) {
   let imported = 0;
   for (const chunk of chunks(rows, BATCH_SIZE)) {
     const { error } = await supabase.from("bible_passages").upsert(chunk, {
-      onConflict: richBible ? "version_id,book_name,chapter,verse" : "translation,book,chapter,verse",
+      // La contrainte historique est une vraie contrainte UNIQUE. L'index enrichi
+      // version_id/book_name est partiel et PostgreSQL ne peut pas toujours
+      // l'utiliser comme arbitre ON CONFLICT selon l'état des migrations.
+      onConflict: "translation,book,chapter,verse",
     });
     if (error) throw new Error(`Import Bible: ${error.message}`);
     imported += chunk.length;
@@ -228,12 +244,15 @@ async function main() {
   const supabase = createClient(url, key, { auth: { persistSession: false } });
   await ensureBucket(supabase);
 
-  const files = fs.readdirSync(IN_DIR).filter((file) => file.endsWith(".json"));
+  const bibleOnly = process.argv.includes("--bible-only");
+  const files = fs
+    .readdirSync(IN_DIR)
+    .filter((file) => file.endsWith(".json"))
+    .filter((file) => (bibleOnly ? file === "bible-biblio-1910.json" : !file.includes("candidate") && !file.includes("report")));
   const results = [];
   for (const name of files) {
-    if (name === "library-import-report.json") continue;
     const file = path.join(IN_DIR, name);
-    if (name.startsWith("bible-")) {
+    if (name === "bible-biblio-1910.json") {
       results.push(await importBible(supabase, file));
     } else {
       results.push(await importHymnBook(supabase, file));

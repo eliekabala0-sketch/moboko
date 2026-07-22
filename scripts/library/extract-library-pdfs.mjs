@@ -186,6 +186,10 @@ function normalizeText(text) {
     .trim();
 }
 
+function isCorruptBibleText(text) {
+  return !text || text.length < 2 || text.length > 2000 || /ö{8,}|�|&(?:[a-z]+|#\d+);/iu.test(text);
+}
+
 async function readPdf(filePath) {
   const data = fs.readFileSync(filePath);
   const parser = new PDFParse({ data });
@@ -374,6 +378,10 @@ function parseBible(pdf) {
     if (current?.text?.trim()) {
       current.text = current.text.replace(/\s+/g, " ").trim();
       current.search_text = `${current.book_name} ${current.chapter}:${current.verse} ${current.text}`;
+      current.validation_status = isCorruptBibleText(current.text) ? "needs_review" : "valid";
+      if (current.validation_status !== "valid") {
+        anomalies.push({ type: "invalid_text", ref: `${current.book_name}.${current.chapter}.${current.verse}` });
+      }
       passages.push(current);
     }
     current = null;
@@ -498,7 +506,18 @@ async function main() {
       entry.language = "fr";
       entry.detected_items = parsed.passages.length;
       entry.validation = parsed.validation;
-      fs.writeFileSync(path.join(OUT_DIR, "bible-biblio-1910.json"), JSON.stringify(parsed, null, 2), "utf8");
+      const bibleOutput = path.join(OUT_DIR, "bible-biblio-1910.json");
+      const existing = fs.existsSync(bibleOutput) ? JSON.parse(fs.readFileSync(bibleOutput, "utf8")) : null;
+      const wouldRegress =
+        existing?.version?.testament_scope === "complete" &&
+        (parsed.version.testament_scope !== "complete" || parsed.passages.length < existing.passages.length || parsed.validation.anomalies.length > 0);
+      if (wouldRegress) {
+        entry.canonical_update_blocked = true;
+        entry.block_reason = "The PDF extraction is less complete than the current canonical Folio extraction.";
+        fs.writeFileSync(path.join(OUT_DIR, "bible-biblio-1910.pdf-candidate.json"), JSON.stringify(parsed, null, 2), "utf8");
+      } else {
+        fs.writeFileSync(bibleOutput, JSON.stringify(parsed, null, 2), "utf8");
+      }
     } else {
       entry.type = "unknown";
     }

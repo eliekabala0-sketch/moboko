@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-07-22T10:10:45.653Z",
+  "source": "C:\\Users\\user\\moboko\\data\\folio-bible\\wbench_bible_fr.RTF",
+  "previous": "C:\\Users\\user\\moboko\\data\\import-ready\\bible-biblio-1910.json",
+  "output": "C:\\Users\\user\\moboko\\data\\import-ready\\bible-biblio-1910.json",
+  "unknown_books": [],
+  "extracted_verses": 31101,
+  "extracted_unique_verses": 31101,
+  "source_duplicate_refs": [],
+  "added": 0,
+  "changed": 0,
+  "unchanged": 31101,
+  "repaired": 0,
+  "retained_from_previous": 0,
+  "validation": {
+    "total_books": 66,
+    "total_chapters": 1189,
+    "total_verses": 31101,
+    "duplicate_refs": [],
+    "invalid_refs": [],
+    "missing_chapters": [],
+    "words_of_jesus_verses": 2028,
+    "anomalies": []
+  }
+}

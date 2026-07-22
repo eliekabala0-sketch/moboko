@@ -17,7 +17,8 @@
     "verify:ai-server": "node scripts/verify-ai-server.mjs",
     "verify:ai": "node scripts/bootstrap-web-env.mjs && node scripts/verify-ai-server.mjs",
     "e2e:ai": "node scripts/bootstrap-web-env.mjs && npm run build -w @moboko/web && node scripts/e2e-ai-chat.mjs",
-    "import:sermons": "node scripts/import-sermons.mjs"
+    "import:sermons": "node scripts/import-sermons.mjs",
+    "rebuild:bible": "node scripts/library/rebuild-bible-from-folio.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -70,6 +70,7 @@ async function main() {
   }
 
   const bible = JSON.parse(fs.readFileSync(path.join(IN_DIR, "bible-biblio-1910.json"), "utf8"));
+  const bibleSourceName = bible.version.source_file || path.basename(bible.version.source_file_path);
   const { data: version, error: versionError } = await supabase
     .from("bible_versions")
     .upsert(
@@ -78,7 +79,7 @@ async function main() {
         abbreviation: bible.version.abbreviation,
         language: bible.version.language,
         testament_scope: bible.version.testament_scope,
-        source_file_path: "library-sources/bibles/bible-biblio-1910.pdf",
+        source_file_path: `library-sources/bibles/${bibleSourceName}`,
         source_file_name: bible.version.source_file,
         source_file_size: bible.version.source_file_size,
         source_file_hash: bible.version.source_file_hash,
