@@ -39,7 +39,21 @@ export async function GET(request: Request) {
   if (category === "sermon" || category === "prayer_line") query = query.eq("category", category);
   if (q.length >= 2) {
     const safe = sanitizeLike(normalize(q));
-    query = query.or(`normalized_title.ilike.%${safe}%,original_filename.ilike.%${sanitizeLike(q)}%`);
+    const { data: frenchSermons } = await admin
+      .from("sermons")
+      .select("id")
+      .eq("is_published", true)
+      .ilike("title", `%${sanitizeLike(q)}%`)
+      .limit(100);
+    const sermonIds = (frenchSermons ?? []).map((row) => row.id).filter(Boolean);
+    const clauses = [
+      `normalized_title.ilike.%${safe}%`,
+      `title_original.ilike.%${sanitizeLike(q)}%`,
+      `original_filename.ilike.%${sanitizeLike(q)}%`,
+      `sermon_code.ilike.%${sanitizeLike(q)}%`,
+    ];
+    if (sermonIds.length > 0) clauses.push(`sermon_id.in.(${sermonIds.join(",")})`);
+    query = query.or(clauses.join(","));
   }
 
   if (sort === "oldest") query = query.order("sermon_date", { ascending: true, nullsFirst: false }).order("title", { ascending: true });
@@ -52,7 +66,23 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     ok: true,
-    results: data ?? [],
+    results: ((data ?? []) as unknown as Array<Record<string, any>>).map((item) => {
+      const embedded = item.sermons;
+      const sermon = Array.isArray(embedded) ? embedded[0] : embedded;
+      return {
+        ...item,
+        sermon_title_fr: sermon?.title ?? item.title,
+        sermon_title_original: item.title_original ?? item.title,
+        audio_available: true,
+        audio_id: item.id,
+        audio_is_free: item.access_policy === "free" || item.access_policy === "excerpt",
+        audio_access_state: access.audio_streaming
+          ? "allowed"
+          : item.access_policy === "free" || item.access_policy === "excerpt"
+            ? "free"
+            : "subscription_required",
+      };
+    }),
     count: count ?? 0,
     page,
     limit,

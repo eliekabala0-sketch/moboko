@@ -1,5 +1,8 @@
 import type { SermonParagraphCandidate } from "@/lib/sermons/ai-sermon-search-server";
 import { attachLinkedSermonAudio } from "@/lib/sermons/linked-audio";
+import { expandConcordanceSegments, type ConcordanceHit } from "@/lib/sermons/concordance-types";
+import { requestedMedia, searchActiveSermonAudio } from "@/lib/audio/search";
+import { getAudioAccess } from "@/lib/audio/access";
 import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
 import { getOpenAIClient } from "@/lib/ai/moboko-chat";
 import { resolveHybridRetrieval } from "@/lib/sermons/retrieval-resolve";
@@ -19,7 +22,8 @@ export const maxDuration = 90;
 
 type Body = { query?: string; offset?: number; pageSize?: number };
 const CONCORDANCE_PAGE_SIZE = 20;
-const EMPTY_CONCORDANCE_MESSAGE = "Aucun passage suffisamment précis n'a été trouvé pour cette formulation.";
+const EMPTY_CONCORDANCE_MESSAGE = "Aucun sermon texte trouvé dans la base Moboko.";
+const EMPTY_AUDIO_MESSAGE = "Aucun sermon audio trouvé dans la base Moboko.";
 
 function aiLog(event: string, meta: Record<string, unknown> = {}) {
   if (process.env.MOBOKO_ASSISTANT_AI_DEBUG !== "1") return;
@@ -45,6 +49,21 @@ function parseBody(raw: unknown): { query: string; offset: number; pageSize: num
       : CONCORDANCE_PAGE_SIZE;
   const pageSize = Math.max(1, Math.min(50, requestedPageSize));
   return { query: t, offset, pageSize };
+}
+
+function normalizeSearchText(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+function containsUnsupportedRareToken(query: string, candidates: SermonParagraphCandidate[]) {
+  const rareTokens = normalizeSearchText(query)
+    .match(/[a-z0-9]+/g)
+    ?.filter((token) => token.length >= 14 || /^\d{6,}$/.test(token)) ?? [];
+  if (rareTokens.length === 0) return false;
+  const corpus = normalizeSearchText(
+    candidates.map((candidate) => `${candidate.title} ${candidate.paragraph_text}`).join(" "),
+  );
+  return rareTokens.every((token) => !corpus.includes(token));
 }
 
 function toPagedHits(
@@ -178,7 +197,16 @@ export async function POST(request: Request) {
 
   let semantic: Awaited<ReturnType<typeof resolveHybridRetrieval>>["semantic"] = null;
   let candidates: SermonParagraphCandidate[];
-  if (isContinuationPage) {
+  const media = requestedMedia(query);
+  let audioResults: Awaited<ReturnType<typeof searchActiveSermonAudio>> = [];
+  if (media === "audio") {
+    audioResults = await searchActiveSermonAudio(admin, user, query, pageSize);
+    candidates = [];
+    diagnostics.candidate_count = audioResults.length;
+    diagnostics.relevant_count = audioResults.length;
+    diagnostics.rehydrated_count = audioResults.length;
+    diagnostics.retrieval_route = "audio_catalog";
+  } else if (isContinuationPage) {
     candidates = await fetchConcordanceSemanticCandidates(admin, query, null, "library");
     diagnostics.candidate_count = candidates.length;
     diagnostics.relevant_count = candidates.length;
@@ -231,6 +259,11 @@ export async function POST(request: Request) {
     aiLog("candidate_count", { count: candidates.length });
   }
 
+  if (media === "text" && containsUnsupportedRareToken(query, candidates)) {
+    candidates = [];
+    diagnostics.fallback_reason = "unsupported_rare_query_token";
+  }
+
   if (includeDiagnostics) {
     diagnostics.relevance_audit = candidates.slice(0, 40).map((c) => ({
       paragraph_number: c.paragraph_number,
@@ -265,6 +298,23 @@ export async function POST(request: Request) {
   }
   const creditsCharged = billingSkipped ? 0 : creditCost;
   aiLog("credits_charged", { amount: creditsCharged, skipped: billingSkipped });
+
+  if (media === "audio") {
+    return NextResponse.json({
+      ok: true,
+      result_kind: "audio",
+      requested_media: "audio",
+      results: [],
+      audio_results: audioResults,
+      total_count: audioResults.length,
+      message: audioResults.length === 0 ? EMPTY_AUDIO_MESSAGE : null,
+      credits_charged: creditsCharged,
+      credit_cost: creditCost,
+      balance_after: balanceAfter,
+      billing_skipped: billingSkipped,
+      ...(includeDiagnostics ? { diagnostics: { ...diagnostics, duration_ms: Date.now() - startedAt } } : {}),
+    });
+  }
 
   if (candidates.length === 0) {
     diagnostics.rehydrated_count = 0;
@@ -327,13 +377,18 @@ export async function POST(request: Request) {
       _total_count: page.totalCount,
     });
   }
-  const enrichedResults = await attachLinkedSermonAudio(admin, results);
+  const audioAccess = await getAudioAccess(admin, user);
+  const enrichedResults = expandConcordanceSegments(
+    (await attachLinkedSermonAudio(admin, results, audioAccess.audio_streaming)) as ConcordanceHit[],
+  );
   diagnostics.rehydrated_count = enrichedResults.length;
   aiLog("rehydrated_count", { count: enrichedResults.length });
   aiLog("final_count", { count: enrichedResults.length, total: page.totalCount, ms: Date.now() - startedAt });
 
   return NextResponse.json({
     ok: true,
+    result_kind: "text",
+    requested_media: "text",
     results: enrichedResults,
     total_count: page.totalCount,
     offset: page.offset,

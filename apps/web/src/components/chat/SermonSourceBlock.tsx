@@ -9,6 +9,7 @@ type Props = {
   date: string | null;
   paragraphNumber: number;
   paragraphText: string;
+  audioId?: string | null;
 };
 
 export function SermonSourceBlock({
@@ -18,6 +19,7 @@ export function SermonSourceBlock({
   date,
   paragraphNumber,
   paragraphText,
+  audioId,
 }: Props) {
   const slugEnc = encodeURIComponent(slug);
   const readHref = `/sermons/${slugEnc}#p-${paragraphNumber}`;
@@ -41,8 +43,12 @@ export function SermonSourceBlock({
         <Link href={projectHref} className="text-[var(--foreground)] hover:underline">
           Projeter
         </Link>
+        {audioId ? (
+          <Link href={`/audio/${encodeURIComponent(audioId)}`} className="text-[var(--accent)] hover:underline">
+            Écouter l&apos;audio
+          </Link>
+        ) : null}
       </div>
     </article>
   );
 }
-

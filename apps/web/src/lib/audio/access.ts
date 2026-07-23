@@ -172,6 +172,9 @@ export function audioPublicSelect() {
     "id",
     "category",
     "title",
+    "title_original",
+    "sermon_code",
+    "search_aliases",
     "original_filename",
     "mime_type",
     "file_size",
@@ -185,6 +188,8 @@ export function audioPublicSelect() {
     "streaming_enabled",
     "offline_enabled",
     "full_download_enabled",
+    "access_policy",
+    "free_excerpt_seconds",
     "sermons(id, slug, title, preached_on, year, location)",
   ].join(", ");
 }

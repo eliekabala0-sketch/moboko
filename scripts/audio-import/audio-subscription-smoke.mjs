@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
 
-const siteUrl = "https://moboko-production.up.railway.app";
+const siteUrl = (process.argv[2] || "https://moboko-production.up.railway.app").replace(/\/$/, "");
 const planKey = `audio_smoke_${Date.now()}`;
 
 function loadEnvFile(file) {
@@ -47,6 +47,11 @@ async function postJson(pathname, token) {
   const body = await res.json().catch(() => ({}));
   console.log(`${pathname}=${res.status} ok=${Boolean(body.ok)} error=${body.error ?? ""}`);
   return { res, body };
+}
+
+function assert(condition, label) {
+  if (!condition) throw new Error(`ECHEC: ${label}`);
+  console.log(`OK ${label}`);
 }
 
 const { data: audio } = await admin
@@ -97,9 +102,12 @@ try {
   if (signed.error) throw signed.error;
   const token = signed.data.session.access_token;
 
-  await postJson(`/api/audio/${audio.id}/stream`, token);
-  await postJson(`/api/audio/${audio.id}/offline`, token);
-  await postJson(`/api/audio/${audio.id}/download`, token);
+  const stream = await postJson(`/api/audio/${audio.id}/stream`, token);
+  const offline = await postJson(`/api/audio/${audio.id}/offline`, token);
+  const download = await postJson(`/api/audio/${audio.id}/download`, token);
+  assert(stream.res.status === 200 && Boolean(stream.body.url), "abonnement autorise la lecture");
+  assert(offline.res.status === 200, "abonnement autorise le hors-ligne");
+  assert(download.res.status === 200, "abonnement autorise le telechargement");
   console.log(`subscription_plan_key=${planKey}`);
   console.log(`subscription_audio=${audio.title}`);
 } finally {

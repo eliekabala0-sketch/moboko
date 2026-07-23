@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, FlatList, Linking, Pressable, Text, View } from "react-native";
 import { Button, Card, Field, Notice, Screen, textStyles } from "../components/ui";
 import { apiJson } from "../lib/api";
 import { dateLabel } from "../lib/format";
 import { supabase } from "../lib/supabase";
+import { getApiBaseUrl } from "../lib/auth-config";
 
 type Conversation = { id: string; title: string | null; updated_at: string | null; created_at: string | null };
-type Message = { id: string; role: string; content: string | null; kind?: string | null; created_at: string };
+type Message = { id: string; role: string; content: string | null; kind?: string | null; created_at: string; metadata?: Record<string, unknown> | null };
 
 type ChatResponse = {
   ok?: boolean;
@@ -39,7 +40,7 @@ export function ChatScreen({ userId }: { userId: string }) {
   const loadMessages = useCallback(async (cid: string) => {
     const { data, error: e } = await supabase
       .from("messages")
-      .select("id, role, content, kind, created_at")
+      .select("id, role, content, kind, created_at, metadata")
       .eq("conversation_id", cid)
       .order("created_at", { ascending: true });
     if (e) throw e;
@@ -140,12 +141,32 @@ export function ChatScreen({ userId }: { userId: string }) {
         data={messages}
         keyExtractor={(item) => item.id}
         style={{ flex: 1 }}
-        renderItem={({ item }) => (
-          <Card>
-            <Text style={textStyles.label}>{item.role === "user" ? "Vous" : "Moboko"}</Text>
-            <Text style={[textStyles.body, { marginTop: 8 }]}>{item.content || "(media)"}</Text>
-          </Card>
-        )}
+        renderItem={({ item }) => {
+          const meta = item.metadata && typeof item.metadata === "object" ? item.metadata : null;
+          const sermonResults = meta && Array.isArray(meta.results) ? meta.results as Array<Record<string, unknown>> : [];
+          const audioResults = meta && Array.isArray(meta.audio_results) ? meta.audio_results as Array<Record<string, unknown>> : [];
+          return (
+            <Card>
+              <Text style={textStyles.label}>{item.role === "user" ? "Vous" : "Moboko"}</Text>
+              {item.content ? <Text style={[textStyles.body, { marginTop: 8 }]}>{item.content}</Text> : null}
+              {sermonResults.map((result, index) => (
+                <View key={`${String(result.slug)}-${String(result.paragraph_number)}-${index}`} style={{ marginTop: 12 }}>
+                  <Text style={textStyles.heading}>{String(result.sermon_title_fr ?? result.title ?? "Sermon")}</Text>
+                  <Text style={[textStyles.muted, { marginTop: 4 }]}>Paragraphe {String(result.paragraph_number)}{Number(result.segment_count ?? 1) > 1 ? ` — segment ${String(result.segment_index ?? 1)}/${String(result.segment_count)}` : ""}</Text>
+                  <Text style={[textStyles.body, { marginTop: 8 }]}>{String(result.paragraph_text ?? "")}</Text>
+                  {typeof result.audio_id === "string" ? <Button label="Écouter l'audio" secondary onPress={() => void Linking.openURL(`${getApiBaseUrl()}/audio/${result.audio_id}`)} /> : null}
+                </View>
+              ))}
+              {audioResults.map((result) => (
+                <View key={String(result.audio_id)} style={{ marginTop: 12 }}>
+                  <Text style={textStyles.heading}>{String(result.sermon_title_fr ?? "Sermon audio")}</Text>
+                  {result.sermon_title_original ? <Text style={[textStyles.muted, { marginTop: 4 }]}>Titre original : {String(result.sermon_title_original)}</Text> : null}
+                  <Button label="Écouter" onPress={() => void Linking.openURL(`${getApiBaseUrl()}/audio/${String(result.audio_id)}`)} />
+                </View>
+              ))}
+            </Card>
+          );
+        }}
       />
       <Field value={text} onChangeText={setText} placeholder="Votre question..." multiline />
       <Button label="Envoyer" onPress={() => void send()} loading={busy} disabled={!text.trim()} />

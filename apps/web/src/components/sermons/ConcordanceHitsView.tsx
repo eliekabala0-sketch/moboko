@@ -221,7 +221,8 @@ export function ConcordanceHitsView({
         <article className="moboko-card p-5 sm:p-6">
           <p className="font-medium text-[var(--foreground)]">{selected.title}</p>
           <p className="mt-1 text-xs text-[var(--accent)]">
-            §{selected.paragraph_number}
+            Paragraphe {selected.paragraph_number}
+            {(selected.segment_count ?? 1) > 1 ? ` — segment ${selected.segment_index ?? 1}/${selected.segment_count}` : ""}
             {selected.location ? ` · ${selected.location}` : ""}
             {selected.date ? ` · ${selected.date}` : ""}
           </p>
@@ -241,7 +242,8 @@ export function ConcordanceHitsView({
 
           <div className="mt-4 rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)]/30 p-4">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--accent)]">
-              Paragraphe trouvé §{selected.paragraph_number}
+              Paragraphe {selected.paragraph_number}
+              {(selected.segment_count ?? 1) > 1 ? ` — segment ${selected.segment_index ?? 1}/${selected.segment_count}` : ""}
             </p>
             <p className="mt-2 whitespace-pre-wrap text-[15px] leading-relaxed text-[var(--foreground)]">
               <HighlightedText text={selected.paragraph_text} query={selected._query} />
@@ -279,7 +281,7 @@ export function ConcordanceHitsView({
                 href={audioHref}
                 className="inline-flex items-center rounded-full border border-[var(--border-strong)] bg-[var(--surface)] px-5 py-2.5 text-[13px] font-semibold text-[var(--foreground)] transition hover:border-[var(--accent)]/40"
               >
-                Ecouter
+                Écouter l&apos;audio
               </Link>
             ) : null}
           </div>
@@ -312,26 +314,30 @@ export function ConcordanceHitsView({
         const k = hitKey(h);
         return (
           <li key={k}>
-            <button
-              type="button"
-              onClick={() => setOpen(k)}
-              className="moboko-card w-full p-4 text-left transition hover:border-[var(--border-strong)]"
-            >
+            <div className="moboko-card w-full p-4 text-left transition hover:border-[var(--border-strong)]">
+              <button type="button" onClick={() => setOpen(k)} className="block w-full text-left">
               <p className="font-medium text-[var(--foreground)]">{h.title}</p>
               <p className="mt-1 text-[11px] text-[var(--accent)]">
-                §{h.paragraph_number}
+                Paragraphe {h.paragraph_number}
+                {(h.segment_count ?? 1) > 1 ? ` — segment ${h.segment_index ?? 1}/${h.segment_count}` : ""}
                 {h.location ? ` · ${h.location}` : ""}
                 {h.date ? ` · ${h.date}` : ""}
               </p>
               <p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">
                 <HighlightedText text={clipPreview(h.paragraph_text)} query={h._query} />
               </p>
-              {h.linked_audio_id ? (
-                <span className="mt-3 inline-flex text-xs font-semibold text-[var(--accent)]">
-                  Audio disponible
-                </span>
-              ) : null}
-            </button>
+              </button>
+              <div className="mt-3 flex flex-wrap gap-3 text-xs font-semibold">
+                <Link href={`/sermons/${encodeURIComponent(h.slug)}#p-${h.paragraph_number}`} className="text-[var(--accent)] hover:underline">
+                  Lire le sermon
+                </Link>
+                {h.linked_audio_id ? (
+                  <Link href={`/audio/${encodeURIComponent(h.linked_audio_id)}`} className="text-[var(--accent)] hover:underline">
+                    Écouter l&apos;audio
+                  </Link>
+                ) : null}
+              </div>
+            </div>
           </li>
         );
       })}

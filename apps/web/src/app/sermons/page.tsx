@@ -12,6 +12,8 @@ import {
 import type { ConcordanceHit } from "@/lib/sermons/concordance-types";
 import { fastRowsToConcordanceHits, fetchFastSermonSearch } from "@/lib/sermons/fast-search";
 import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
+import { attachLinkedSermonAudio } from "@/lib/sermons/linked-audio";
+import { expandConcordanceSegments } from "@/lib/sermons/concordance-types";
 import { consumeNormalSearchQuota } from "@/lib/billing/normal-search-quota";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -204,6 +206,14 @@ export default async function SermonsPage({ searchParams }: PageProps) {
     }
   }
 
+  const enrichmentAdmin = createSupabaseServiceClient();
+  const displayConcordanceHits = concordanceHits.length > 0 && enrichmentAdmin
+    ? expandConcordanceSegments(await attachLinkedSermonAudio(enrichmentAdmin, concordanceHits))
+    : concordanceHits;
+  const displayRows = (rows.length > 0 && enrichmentAdmin
+    ? await attachLinkedSermonAudio(enrichmentAdmin, rows)
+    : rows) as Array<SermonListRow & { linked_audio_id?: string | null }>;
+
   const hasFilters = Boolean(st || sy || sl);
   const hasParagraphQuery = pq.length >= 2;
 
@@ -241,10 +251,10 @@ export default async function SermonsPage({ searchParams }: PageProps) {
               <p className="moboko-card mt-4 p-6 text-sm text-[var(--muted)]">
                 Aucun paragraphe ne correspond à « {pq} ».
               </p>
-            ) : concordanceHits.length > 0 ? (
+            ) : displayConcordanceHits.length > 0 ? (
               <div className="mt-4">
                 {quotaLine ? <p className="mb-3 text-xs text-[var(--muted)]">{quotaLine}</p> : null}
-                <ConcordanceHitsView hits={concordanceHits} />
+                <ConcordanceHitsView hits={displayConcordanceHits} />
               </div>
             ) : (
               <ul className="mt-4 space-y-3">
@@ -296,7 +306,7 @@ export default async function SermonsPage({ searchParams }: PageProps) {
             </p>
           ) : (
             <ul className="mt-4 space-y-3">
-              {rows.map((s) => {
+              {displayRows.map((s) => {
                 const slugEnc = encodeURIComponent(s.slug);
                 const meta = [
                   s.preached_on,
@@ -326,6 +336,11 @@ export default async function SermonsPage({ searchParams }: PageProps) {
                         <Link href={`/sermons/${slugEnc}/project`} className="text-[var(--foreground)] hover:underline">
                           Projection (début)
                         </Link>
+                        {typeof s.linked_audio_id === "string" ? (
+                          <Link href={`/audio/${encodeURIComponent(s.linked_audio_id)}`} className="text-[var(--accent)] hover:underline">
+                            Écouter l&apos;audio
+                          </Link>
+                        ) : null}
                       </div>
                     </div>
                   </li>

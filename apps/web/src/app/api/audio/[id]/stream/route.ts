@@ -29,14 +29,13 @@ export async function POST(request: Request, { params }: Params) {
   if (!audio?.is_active || !audio.streaming_enabled || audio.access_policy === "unavailable") {
     return NextResponse.json({ error: "audio_indisponible" }, { status: 404 });
   }
-  const { user, error: authErr } = await getUserFromApiRequest(request);
-  if (authErr || !user) return NextResponse.json({ error: "non_authentifie" }, { status: 401 });
-  const access = await getAudioAccess(admin, user, audio);
+  const { user } = await getUserFromApiRequest(request);
+  const access = await getAudioAccess(admin, user ?? null, audio);
   if (!canUseAudioRight(access, "audio_streaming")) {
     return NextResponse.json({ error: "abonnement_audio_requis", message: "Votre abonnement ne permet pas l'ecoute audio." }, { status: 402 });
   }
   await admin.from("audio_play_events").insert({
-    user_id: user.id,
+    user_id: user?.id ?? null,
     audio_id: audio.id,
     event_type: "stream",
     access_source: access.accessSource === "none" ? "subscription" : access.accessSource,

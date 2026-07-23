@@ -6,6 +6,8 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { ChatAttachmentRecord } from "@moboko/shared";
 import { useEffect, useState } from "react";
 import { SermonSourceBlock } from "./SermonSourceBlock";
+import { AudioSearchResults } from "@/components/audio/AudioSearchResults";
+import type { AudioSearchResult } from "@/lib/audio/search";
 
 export type UiMessage = {
   id: string;
@@ -62,6 +64,9 @@ function Bubble({
       ? coerceConcordanceHits(meta.results)
       : null;
   const concordanceEmpty = meta?.moboko_kind === "sermon_concordance_empty";
+  const audioResults = meta?.moboko_kind === "audio_search" && Array.isArray(meta.audio_results)
+    ? (meta.audio_results as AudioSearchResult[])
+    : null;
   const parsed =
     !mine && msg.kind === "text" && !hits?.length && !concordanceEmpty
       ? parseAssistantSermonSources(msg.content)
@@ -93,7 +98,9 @@ function Bubble({
               className="mb-2 h-9 w-full max-w-xs opacity-95"
             />
           ) : null}
-          {hits && hits.length > 0 ? (
+          {audioResults && audioResults.length > 0 ? (
+            <AudioSearchResults results={audioResults} />
+          ) : hits && hits.length > 0 ? (
             <ConcordanceHitsView
               hits={hits}
               conversationId={conversationId}

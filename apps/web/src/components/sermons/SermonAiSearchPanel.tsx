@@ -5,6 +5,8 @@ import type { ConcordanceHit } from "@/lib/sermons/concordance-types";
 import Link from "next/link";
 import { useState } from "react";
 import { ConcordanceHitsView } from "./ConcordanceHitsView";
+import { AudioSearchResults } from "@/components/audio/AudioSearchResults";
+import type { AudioSearchResult } from "@/lib/audio/search";
 
 type Props = {
   enabled: boolean;
@@ -19,6 +21,8 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [errAction, setErrAction] = useState<ErrAction>(null);
   const [hits, setHits] = useState<ConcordanceHit[]>([]);
+  const [audioResults, setAudioResults] = useState<AudioSearchResult[]>([]);
+  const [emptyMessage, setEmptyMessage] = useState<string | null>(null);
   const [billingLine, setBillingLine] = useState<string | null>(null);
   const [hasSearchedOk, setHasSearchedOk] = useState(false);
 
@@ -28,6 +32,8 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
     setErrAction(null);
     setBillingLine(null);
     setHasSearchedOk(false);
+    setAudioResults([]);
+    setEmptyMessage(null);
     const q = query.trim();
     if (q.length < 8) {
       setErr("Saisissez au moins 8 caractères pour décrire ce que vous cherchez.");
@@ -71,6 +77,8 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
         return;
       }
       setHits(coerceConcordanceHits(list));
+      setAudioResults(Array.isArray(data.audio_results) ? (data.audio_results as AudioSearchResult[]) : []);
+      setEmptyMessage(typeof data.message === "string" ? data.message : null);
       setHasSearchedOk(true);
 
       const charged = Number(data.credits_charged);
@@ -113,7 +121,7 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
   }
 
   const showResultsBlock = hasSearchedOk;
-  const showEmptyOk = hasSearchedOk && hits.length === 0;
+  const showEmptyOk = hasSearchedOk && hits.length === 0 && audioResults.length === 0;
 
   return (
     <section className="moboko-card mt-8 p-6 sm:p-7">
@@ -228,11 +236,12 @@ export function SermonAiSearchPanel({ enabled, creditCost }: Props) {
           {showEmptyOk ? (
             <div className="moboko-card p-6">
               <p className="text-sm leading-relaxed text-[var(--foreground)]">
-                Aucun passage suffisamment précis n&apos;a été trouvé pour cette formulation.
-                <br />
-                Élargir à : union de l&apos;homme et de la femme dans le mariage.
+                {emptyMessage ?? "Aucun résultat trouvé dans la base Moboko pour cette recherche."}
+                <br />Vous pouvez retirer l&apos;année ou le lieu, ou élargir la formulation.
               </p>
             </div>
+          ) : audioResults.length > 0 ? (
+            <AudioSearchResults results={audioResults} />
           ) : (
             <ConcordanceHitsView hits={hits} />
           )}

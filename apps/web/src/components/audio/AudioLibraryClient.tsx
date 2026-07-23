@@ -7,6 +7,8 @@ type AudioItem = {
   id: string;
   category: "sermon" | "prayer_line";
   title: string;
+  title_original?: string | null;
+  sermon_title_fr?: string | null;
   original_filename: string;
   file_size: number | null;
   duration_seconds: number | null;
@@ -53,7 +55,12 @@ function sermonSlug(item: AudioItem) {
   return sermon?.slug ?? null;
 }
 
-export function AudioLibraryClient({ category }: { category?: "sermon" | "prayer_line" }) {
+function sermonTitle(item: AudioItem) {
+  const sermon = Array.isArray(item.sermons) ? item.sermons[0] : item.sermons;
+  return item.sermon_title_fr || sermon?.title || item.title;
+}
+
+export function AudioLibraryClient({ category, focusId }: { category?: "sermon" | "prayer_line"; focusId?: string }) {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState("recent");
   const [page, setPage] = useState(1);
@@ -76,12 +83,13 @@ export function AudioLibraryClient({ category }: { category?: "sermon" | "prayer
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/audio?${params.toString()}`, { cache: "no-store" })
-      .then((res) => res.json() as Promise<ApiResponse>)
+    fetch(focusId ? `/api/audio/${encodeURIComponent(focusId)}` : `/api/audio?${params.toString()}`, { cache: "no-store" })
+      .then((res) => res.json() as Promise<ApiResponse & { audio?: AudioItem }>)
       .then((data) => {
         if (cancelled) return;
-        setItems(data.results ?? []);
-        setCount(data.count ?? 0);
+        const nextItems = focusId && data.audio ? [data.audio] : data.results ?? [];
+        setItems(nextItems);
+        setCount(focusId ? nextItems.length : data.count ?? 0);
         if (data.access) setAccess(data.access);
       })
       .catch(() => {
@@ -93,7 +101,7 @@ export function AudioLibraryClient({ category }: { category?: "sermon" | "prayer
     return () => {
       cancelled = true;
     };
-  }, [params]);
+  }, [focusId, params]);
 
   async function signedAction(id: string, action: "stream" | "offline" | "download") {
     setMessage(null);
@@ -138,7 +146,7 @@ export function AudioLibraryClient({ category }: { category?: "sermon" | "prayer
 
   return (
     <div className="mt-8">
-      <div className="moboko-card grid gap-3 p-4 sm:grid-cols-[1fr_auto]">
+      {!focusId ? <div className="moboko-card grid gap-3 p-4 sm:grid-cols-[1fr_auto]">
         <input
           value={q}
           onChange={(e) => {
@@ -164,7 +172,7 @@ export function AudioLibraryClient({ category }: { category?: "sermon" | "prayer
           <option value="az">A vers Z</option>
           <option value="za">Z vers A</option>
         </select>
-      </div>
+      </div> : null}
 
       {message ? <p className="moboko-card mt-4 p-4 text-sm text-[var(--muted)]">{message}</p> : null}
 
@@ -192,8 +200,11 @@ export function AudioLibraryClient({ category }: { category?: "sermon" | "prayer
                     {item.category === "sermon" ? "Sermon audio" : "Ligne de priere"}
                   </p>
                   <Link href={`/audio/${item.id}`} className="mt-2 block font-medium text-[var(--foreground)] hover:text-[var(--accent)]">
-                    {item.title}
+                    {sermonTitle(item)}
                   </Link>
+                  {(item.title_original || item.title) !== sermonTitle(item) ? (
+                    <p className="mt-1 text-xs text-[var(--muted)]">Titre original : {item.title_original || item.title}</p>
+                  ) : null}
                   <p className="mt-2 text-xs text-[var(--muted)]">
                     {[item.sermon_date ?? item.sermon_year, item.location, durationLabel(item.duration_seconds), sizeLabel(item.file_size)].filter(Boolean).join(" - ")}
                   </p>
@@ -229,7 +240,7 @@ export function AudioLibraryClient({ category }: { category?: "sermon" | "prayer
         })}
       </div>
 
-      <div className="mt-6 flex items-center justify-between text-sm text-[var(--muted)]">
+      {!focusId ? <div className="mt-6 flex items-center justify-between text-sm text-[var(--muted)]">
         <button className="rounded-full border border-[var(--border)] px-4 py-2 disabled:opacity-40" disabled={page <= 1} onClick={() => { setBusy(true); setPage((p) => Math.max(1, p - 1)); }}>
           Precedent
         </button>
@@ -239,7 +250,7 @@ export function AudioLibraryClient({ category }: { category?: "sermon" | "prayer
         <button className="rounded-full border border-[var(--border)] px-4 py-2 disabled:opacity-40" disabled={page >= totalPages} onClick={() => { setBusy(true); setPage((p) => Math.min(totalPages, p + 1)); }}>
           Suivant
         </button>
-      </div>
+      </div> : null}
     </div>
   );
 }

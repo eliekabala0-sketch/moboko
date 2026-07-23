@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
 
-const siteUrl = "https://moboko-production.up.railway.app";
+const siteUrl = (process.argv[2] || "https://moboko-production.up.railway.app").replace(/\/$/, "");
 
 function loadEnvFile(file) {
   if (!existsSync(file)) return;
@@ -53,6 +53,11 @@ async function postJson(pathname, token) {
   return { status: res.status, body };
 }
 
+function assert(condition, label) {
+  if (!condition) throw new Error(`ECHEC: ${label}`);
+  console.log(`OK ${label}`);
+}
+
 const { data: sermon } = await admin
   .from("audio_items")
   .select("id, title, storage_bucket, storage_path")
@@ -80,7 +85,8 @@ const publicUrl = `${url}/storage/v1/object/public/${sermon.storage_bucket}/${se
 const publicRes = await fetch(publicUrl, { method: "GET" });
 console.log(`storage_public_get=${publicRes.status}`);
 
-await postJson(`/api/audio/${sermon.id}/stream`);
+const anonymousStream = await postJson(`/api/audio/${sermon.id}/stream`);
+assert([200, 402, 403].includes(anonymousStream.status), "droit anonyme explicitement applique");
 
 const email = `audio-smoke-${Date.now()}@moboko.local`;
 const password = `MobokoAudio!${Date.now()}`;
@@ -98,7 +104,8 @@ try {
   if (signed.error) throw signed.error;
   const token = signed.data.session.access_token;
 
-  await postJson(`/api/audio/${sermon.id}/stream`, token);
+  const withoutRights = await postJson(`/api/audio/${sermon.id}/stream`, token);
+  assert([200, 402, 403].includes(withoutRights.status), "droit utilisateur sans offre explicitement applique");
 
   await admin.from("user_audio_access_overrides").upsert(
     {
@@ -113,14 +120,17 @@ try {
   );
 
   const stream = await postJson(`/api/audio/${sermon.id}/stream`, token);
+  assert(stream.status === 200 && Boolean(stream.body.url), "lecture autorisee par droit serveur");
   if (stream.body.url) {
     const streamUrl = stream.body.url.startsWith("http") ? stream.body.url : `${siteUrl}${stream.body.url}`;
     const range = await fetch(streamUrl, { headers: { Range: "bytes=0-1023" } });
     console.log(`signed_stream_range=${range.status} bytes=${range.headers.get("content-length") ?? ""}`);
   }
 
-  await postJson(`/api/audio/${sermon.id}/offline`, token);
-  await postJson(`/api/audio/${sermon.id}/download`, token);
+  const offline = await postJson(`/api/audio/${sermon.id}/offline`, token);
+  const download = await postJson(`/api/audio/${sermon.id}/download`, token);
+  assert(offline.status === 200, "hors-ligne autorise par droit serveur");
+  assert(download.status === 200, "telechargement autorise par droit serveur");
   await postJson(`/api/audio/${prayer.id}/stream`, token);
   await postJson(`/api/audio/${prayer.id}/download`, token);
 

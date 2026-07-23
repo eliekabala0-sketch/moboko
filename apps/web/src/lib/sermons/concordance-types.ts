@@ -3,6 +3,8 @@
  * Texte des paragraphes : copie exacte base.
  */
 export type ConcordanceHit = {
+  sermon_id?: string | null;
+  paragraph_id?: string | null;
   slug: string;
   title: string;
   location: string | null;
@@ -14,6 +16,16 @@ export type ConcordanceHit = {
   next_paragraph_number: number | null;
   next_paragraph_text: string | null;
   linked_audio_id?: string | null;
+  segment_index?: number;
+  segment_count?: number;
+  sermon_title_fr?: string | null;
+  sermon_title_original?: string | null;
+  sermon_date?: string | null;
+  audio_available?: boolean;
+  audio_id?: string | null;
+  audio_access_state?: "allowed" | "free" | "subscription_required" | null;
+  audio_is_free?: boolean;
+  audio_duration_seconds?: number | null;
   _source?: "chat" | "sermons-search";
   _query?: string;
   _conversation_id?: string;
@@ -24,8 +36,31 @@ export type ConcordanceHit = {
   _total_count?: number;
 };
 
-export function hitKey(h: Pick<ConcordanceHit, "slug" | "paragraph_number">): string {
-  return `${h.slug}:${h.paragraph_number}`;
+export function hitKey(h: Pick<ConcordanceHit, "slug" | "paragraph_number" | "segment_index">): string {
+  return `${h.slug}:${h.paragraph_number}:${h.segment_index ?? 1}`;
+}
+
+function splitLongSegment(block: string, maxChars = 900) {
+  if (block.length <= maxChars) return [block];
+  const parts: string[] = [];
+  let remaining = block;
+  while (remaining.length > maxChars) {
+    const sentence = Math.max(remaining.lastIndexOf(". ", maxChars), remaining.lastIndexOf("? ", maxChars), remaining.lastIndexOf("! ", maxChars));
+    const space = remaining.lastIndexOf(" ", maxChars);
+    const cut = sentence > Math.floor(maxChars * 0.55) ? sentence + 1 : space > 0 ? space : maxChars;
+    parts.push(remaining.slice(0, cut).trim());
+    remaining = remaining.slice(cut).trim();
+  }
+  if (remaining) parts.push(remaining);
+  return parts;
+}
+
+export function expandConcordanceSegments<T extends ConcordanceHit>(hits: T[]): T[] {
+  return hits.flatMap((hit) => {
+    const segments = hit.paragraph_text.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean).flatMap((part) => splitLongSegment(part));
+    const safe = segments.length > 0 ? segments : [hit.paragraph_text];
+    return safe.map((paragraph_text, index) => ({ ...hit, paragraph_text, segment_index: index + 1, segment_count: safe.length }));
+  });
 }
 
 function isRecord(x: unknown): x is Record<string, unknown> {
@@ -104,6 +139,18 @@ export function coerceConcordanceHits(raw: unknown): ConcordanceHit[] {
       next_paragraph_number,
       next_paragraph_text: nextText,
       linked_audio_id: typeof o.linked_audio_id === "string" ? o.linked_audio_id : null,
+      sermon_id: typeof o.sermon_id === "string" ? o.sermon_id : null,
+      paragraph_id: typeof o.paragraph_id === "string" ? o.paragraph_id : null,
+      segment_index: typeof o.segment_index === "number" ? o.segment_index : 1,
+      segment_count: typeof o.segment_count === "number" ? o.segment_count : 1,
+      sermon_title_fr: typeof o.sermon_title_fr === "string" ? o.sermon_title_fr : title,
+      sermon_title_original: typeof o.sermon_title_original === "string" ? o.sermon_title_original : null,
+      sermon_date: typeof o.sermon_date === "string" ? o.sermon_date : date,
+      audio_available: o.audio_available === true,
+      audio_id: typeof o.audio_id === "string" ? o.audio_id : null,
+      audio_access_state: o.audio_access_state === "allowed" || o.audio_access_state === "free" || o.audio_access_state === "subscription_required" ? o.audio_access_state : null,
+      audio_is_free: o.audio_is_free === true,
+      audio_duration_seconds: typeof o.audio_duration_seconds === "number" ? o.audio_duration_seconds : null,
       _source:
         o._source === "chat" || o._source === "sermons-search"
           ? (o._source as "chat" | "sermons-search")

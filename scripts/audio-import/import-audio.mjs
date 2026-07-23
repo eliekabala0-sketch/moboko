@@ -82,7 +82,7 @@ function safeFilename(value) {
 
 function parseCode(name) {
   const match = name.match(/FRN(?<yy>\d{2})-(?<md>\d{4})(?<suffix>[A-Z]?)/i);
-  if (!match?.groups) return { code: null, year: null, date: null };
+  if (!match?.groups) return { code: null, year: null, date: null, session: null };
   const yy = Number(match.groups.yy);
   const year = yy < 30 ? 2000 + yy : 1900 + yy;
   const month = Number(match.groups.md.slice(0, 2));
@@ -90,7 +90,12 @@ function parseCode(name) {
   const date = month >= 1 && month <= 12 && day >= 1 && day <= 31
     ? `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
     : null;
-  return { code: match[0].toUpperCase(), year, date };
+  return { code: match[0].toUpperCase(), year, date, session: match.groups.suffix?.toUpperCase() || null };
+}
+
+function sermonSession(sermon) {
+  const match = `${sermon.title ?? ""} ${sermon.source_file ?? ""}`.match(/\b(?:\d{2}[.\/-]\d{2}[.\/-]\d{2}|\d{4})\s*([MES])\b/i);
+  return match?.[1]?.toUpperCase() ?? null;
 }
 
 async function walk(dir) {
@@ -115,10 +120,19 @@ async function sha256(file) {
 
 async function findSermon(admin, item) {
   if (category !== "sermon") return { sermon_id: null, sermon_match_status: "unmatched", sermon_match_score: null };
-  let query = admin.from("sermons").select("id, title, preached_on, year, location").eq("is_published", true).limit(20);
+  let query = admin.from("sermons").select("id, title, preached_on, year, location, source_file").eq("is_published", true).limit(20);
   if (item.date) query = query.eq("preached_on", item.date);
   else if (item.year) query = query.eq("year", item.year);
   const { data } = await retry("find sermon", () => query);
+  if (item.date && (data ?? []).length === 1) {
+    return { sermon_id: data[0].id, sermon_match_status: "matched", sermon_match_score: 1 };
+  }
+  if (item.date && item.session && (data ?? []).length > 1) {
+    const sessionCandidates = data.filter((sermon) => sermonSession(sermon) === item.session);
+    if (sessionCandidates.length === 1) {
+      return { sermon_id: sessionCandidates[0].id, sermon_match_status: "matched", sermon_match_score: 1 };
+    }
+  }
   const title = normalize(item.title);
   let best = null;
   for (const sermon of data ?? []) {
@@ -319,11 +333,14 @@ async function main() {
       const checksum = await sha256(file);
       const yearSegment = parsed.year ? String(parsed.year) : "unknown";
       const storagePath = `${category === "sermon" ? "sermons" : "prayer-lines"}/${yearSegment}/${checksum.slice(0, 12)}-${safeFilename(original)}`;
-      const match = await findSermon(admin, { title, year: parsed.year, date: parsed.date });
+      const match = await findSermon(admin, { title, year: parsed.year, date: parsed.date, session: parsed.session });
       const row = {
         media_type: "audio",
         category,
         title,
+        title_original: title,
+        sermon_code: parsed.code,
+        search_aliases: [],
         normalized_title: normalize(`${parsed.code ?? ""} ${title}`),
         original_filename: original,
         original_relative_path: relative,

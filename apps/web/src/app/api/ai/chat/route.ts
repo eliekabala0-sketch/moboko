@@ -15,6 +15,9 @@ import { ensureMonthlySubscriptionCredits } from "@/lib/billing/subscription-cre
 import { fetchNeighborParagraphs } from "@/lib/sermons/paragraph-neighbors";
 import { fetchSingleParagraphCandidate } from "@/lib/sermons/retrieval-direct";
 import { attachLinkedSermonAudio } from "@/lib/sermons/linked-audio";
+import { expandConcordanceSegments, type ConcordanceHit } from "@/lib/sermons/concordance-types";
+import { requestedMedia, searchActiveSermonAudio } from "@/lib/audio/search";
+import { getAudioAccess } from "@/lib/audio/access";
 import {
   ALL_PUBLIC_APP_SETTING_KEYS,
   parseAppSettingScalar,
@@ -105,7 +108,8 @@ function pathBelongsToUser(path: string, userId: string) {
   return path.startsWith(`${userId}/`);
 }
 
-const EMPTY_CONCORDANCE_MESSAGE = "Aucun passage suffisamment précis n'a été trouvé pour cette formulation.";
+const EMPTY_CONCORDANCE_MESSAGE = "Aucun sermon texte trouvé dans la base Moboko.";
+const EMPTY_AUDIO_MESSAGE = "Aucun sermon audio trouvé dans la base Moboko.";
 const BIBLE_INTENT_WORDS = ["bible", "verset", "versets", "ecriture", "ecritures", "scripture", "scriptures"];
 const SERMON_INTENT_WORDS = ["prophete", "proph�te", "branham", "message", "messages", "sermon", "sermons", "citation", "citations"];
 
@@ -137,8 +141,7 @@ function wantsBibleAndMessages(value: string) {
   if (text.includes("bible et messages") || text.includes("bible et les messages")) return true;
   if (text.includes("passages bibliques") && SERMON_INTENT_WORDS.some((word) => text.includes(word))) return true;
   if (text.includes("donne moi aussi") && BIBLE_INTENT_WORDS.some((word) => text.includes(word))) return true;
-  const broadTopics = ["nouvelle naissance", "pardon", "foi", "mariage", "bapteme", "saint esprit", "grace", "salut"];
-  return broadTopics.some((topic) => text.includes(topic)) && !SERMON_INTENT_WORDS.some((word) => text.includes(word));
+  return false;
 }
 
 function bibleSearchTerms(value: string) {
@@ -211,6 +214,7 @@ async function rehydrateStoredRefs(
     totalCount: number;
     hasMore: boolean;
     nextOffset: number | null;
+    audioStreamingAllowed: boolean;
   },
 ) {
   const out: Record<string, unknown>[] = [];
@@ -240,7 +244,7 @@ async function rehydrateStoredRefs(
       _total_count: meta.totalCount,
     });
   }
-  return attachLinkedSermonAudio(admin, out);
+  return expandConcordanceSegments((await attachLinkedSermonAudio(admin, out, meta.audioStreamingAllowed)) as ConcordanceHit[]);
 }
 
 export async function POST(request: Request) {
@@ -257,6 +261,7 @@ export async function POST(request: Request) {
   if (authErr || !user) {
     return NextResponse.json({ error: "non_authentifie" }, { status: 401 });
   }
+  const userAudioAccess = await getAudioAccess(admin, user);
 
   let body: Body;
   try {
@@ -354,6 +359,7 @@ export async function POST(request: Request) {
         totalCount: storedTotal,
         hasMore,
         nextOffset,
+        audioStreamingAllowed: userAudioAccess.audio_streaming,
       });
       return NextResponse.json({
         ok: true,
@@ -413,9 +419,12 @@ export async function POST(request: Request) {
     const end = offset + visibleResults.length;
     const hasMore = expectedTotal == null ? result.has_more : end < visibleTotal;
     const nextOffset = hasMore ? end : null;
+    const enrichedVisibleResults = expandConcordanceSegments(
+      (await attachLinkedSermonAudio(admin, visibleResults, userAudioAccess.audio_streaming)) as ConcordanceHit[],
+    );
     return NextResponse.json({
       ok: true,
-      results: visibleResults,
+      results: enrichedVisibleResults,
       total_count: visibleTotal,
       offset: result.offset,
       page_size: result.page_size,
@@ -656,7 +665,20 @@ export async function POST(request: Request) {
       console.log("[moboko-openai] api_key_present=true");
       console.log("[moboko-openai] model=" + getChatModel());
       try {
-        if (wantsBibleOnly(userContent)) {
+        if (requestedMedia(userContent) === "audio") {
+          const audioResults = await searchActiveSermonAudio(admin, user, userContent, 20);
+          assistantText = audioResults.length > 0 ? "Sermons audio trouvés dans la base Moboko." : EMPTY_AUDIO_MESSAGE;
+          metaAssistant = {
+            model: getChatModel(),
+            sermon_context_count: 0,
+            moboko_kind: audioResults.length > 0 ? "audio_search" : "audio_search_empty",
+            requested_media: "audio",
+            audio_results: audioResults,
+            total_count: audioResults.length,
+            moboko_assistant_state: { ...assistantState, last_source: "audio", updated_at: new Date().toISOString() },
+          };
+          assistantState = metaAssistant.moboko_assistant_state as Record<string, unknown>;
+        } else if (wantsBibleOnly(userContent)) {
           const bibleHits = await fetchBibleContext(admin, userContent);
           const bibleContext = bibleHits.map((hit) => `${hit.book} ${hit.chapter}:${hit.verse} - ${hit.text}`).join("\n");
           const bibleMessages: ChatCompletionMessageParam[] = [
@@ -669,7 +691,9 @@ export async function POST(request: Request) {
                   : `Question: ${userContent}\n\nL'utilisateur demande la Bible, mais aucun verset exact n'a ete retrouve dans la bibliotheque locale. Dis-le simplement et propose de reformuler.`,
             },
           ];
-          assistantText = await runChatCompletion(openai, bibleMessages);
+          assistantText = bibleHits.length > 0
+            ? await runChatCompletion(openai, bibleMessages)
+            : "Aucun résultat biblique trouvé dans la base Moboko.";
           metaAssistant = {
             model: getChatModel(),
             sermon_context_count: 0,
@@ -691,9 +715,15 @@ export async function POST(request: Request) {
           debug: debugEnabled,
         });
         sermonContextCount = agent.hits.length;
-        assistantText = includeBibleWithMessages
-          ? `${formatBibleSection(bibleHitsForMixed)}\n\nDans les Messages\n${agent.text}`
-          : agent.text;
+        assistantText = agent.hits.length > 0
+          ? includeBibleWithMessages
+            ? `${formatBibleSection(bibleHitsForMixed)}\n\nDans les Messages`
+            : ""
+          : includeBibleWithMessages
+            ? bibleHitsForMixed.length > 0
+              ? `${formatBibleSection(bibleHitsForMixed)}\n\nAucun sermon texte trouvé dans la base Moboko.`
+              : "Aucun résultat trouvé dans les Messages ni dans la Bible."
+            : EMPTY_CONCORDANCE_MESSAGE;
         activeListId = agent.hits.length > 0 ? crypto.randomUUID() : null;
         const listReferences =
           agent.candidateRefs && agent.candidateRefs.length > agent.hits.length
@@ -707,12 +737,14 @@ export async function POST(request: Request) {
         const listNextOffset =
           listReferences.length > agent.hits.length ? agent.hits.length : agent.nextOffset;
         const listHasMore = listReferences.length > agent.hits.length || agent.hasMore;
-        const displayResults = await attachLinkedSermonAudio(admin, agent.hits.map((hit) => ({
-          ...hit,
-          _next_offset: listNextOffset,
-          _has_more: listHasMore,
-          _total_count: Math.max(agent.totalCount, listReferences.length),
-        })));
+        const displayResults = expandConcordanceSegments(
+          (await attachLinkedSermonAudio(admin, agent.hits.map((hit) => ({
+            ...hit,
+            _next_offset: listNextOffset,
+            _has_more: listHasMore,
+            _total_count: Math.max(agent.totalCount, listReferences.length),
+          })), userAudioAccess.audio_streaming)) as ConcordanceHit[],
+        );
         const stateWithList =
           activeListId && agent.hits.length > 0
             ? {

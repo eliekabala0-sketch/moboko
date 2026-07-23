@@ -51,6 +51,7 @@ export default async function SermonDetailPage({ params, searchParams }: Props) 
         .eq("sermon_id", sermon.id)
         .eq("category", "sermon")
         .eq("is_active", true)
+        .eq("streaming_enabled", true)
         .order("created_at", { ascending: true })
         .limit(1)
     : { data: null };
